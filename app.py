@@ -110,24 +110,18 @@ def kpi_card(title: str, value: float, color: str, benchmark: float | None = Non
             f"{arrow} {abs(diff):.1f}% เทียบเป้า World-Class</div>"
         )
 
-    st.markdown(
-        f"""
-        <div style="
-            background: linear-gradient(135deg, {color}15 0%, {color}05 100%);
-            border-left: 6px solid {color};
-            border-radius: 12px;
-            padding: 18px 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        ">
-            <div style="font-size:0.95rem;color:#64748b;font-weight:600;">{title}</div>
-            <div style="font-size:2.4rem;font-weight:800;color:{color};line-height:1.1;">
-                {pct:.1f}%
-            </div>
-            {bench_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # หมายเหตุ: ต้องเขียน HTML แบบไม่มีการเยื้องหน้าบรรทัด (no indent)
+    # มิฉะนั้น Markdown ของ Streamlit จะตีความว่าเป็น code block แล้วโชว์เป็นตัวหนังสือ
+    card_html = (
+        f'<div style="background: linear-gradient(135deg, {color}15 0%, {color}05 100%);'
+        f'border-left: 6px solid {color}; border-radius: 12px; padding: 18px 20px;'
+        f'box-shadow: 0 2px 8px rgba(0,0,0,0.06);">'
+        f'<div style="font-size:0.95rem;color:#64748b;font-weight:600;">{title}</div>'
+        f'<div style="font-size:2.4rem;font-weight:800;color:{color};line-height:1.1;">{pct:.1f}%</div>'
+        f'{bench_html}'
+        f'</div>'
     )
+    st.markdown(card_html, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
