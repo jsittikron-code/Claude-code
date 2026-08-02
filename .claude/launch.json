@@ -1,0 +1,35 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tou",
+      "url": "http://localhost:8502",
+      "port": 8502
+    },
+    {
+      "name": "monitor",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "monitor.py", "--server.headless", "true", "--server.port", "8512"],
+      "port": 8512
+    },
+    {
+      "name": "workcenter",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "workcenter_monitor.py", "--server.headless", "true", "--server.port", "8503"],
+      "port": 8503
+    },
+    {
+      "name": "maintenance",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "maintenance_dashboard.py", "--server.headless", "true", "--server.port", "8505"],
+      "port": 8505
+    },
+    {
+      "name": "energy",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "python -m streamlit run energy_monitor.py --server.headless true --server.port %PORT%"],
+      "port": 8514,
+      "autoPort": true
+    }
+  ]
+}
