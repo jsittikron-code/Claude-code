@@ -1,0 +1,119 @@
+# -*- coding: utf-8 -*-
+"""ขั้นที่ 1 ของงานอัปเดตประจำวัน — ย้ายไฟล์ export เข้าโฟลเดอร์ลงวันที่
+
+หาไฟล์ r-jobtran-mc และ r-jobtran-oee ในโฟลเดอร์ Downloads แล้วย้ายเข้า
+00_ข้อมูลดิบ_MOS\\<ปี พ.ศ.-เดือน-วัน>\\ ตามที่ update_mos.py คาดหวัง
+
+กฎความปลอดภัย 3 ข้อ (เขียนขึ้นหลังทดสอบแล้วพลาดจริงทั้งสามแบบ)
+  1. วันที่ของโฟลเดอร์อ่านจาก "ชื่อไฟล์" ไม่ใช่นาฬิกาเครื่อง และแปลงเป็น พ.ศ.
+     ด้วยการบวก 543 ไม่ใช่เติม "25" ข้างหน้า (เติม 25 จะได้ 2526 ผิดไป 43 ปี)
+  2. ไฟล์ mc กับ oee ต้องเป็นของ "วันเดียวกัน" เท่านั้น ไม่งั้นหยุด
+     เพราะใน Downloads มี export เก่าค้างอยู่นับร้อยไฟล์ ถ้าหยิบตัวใหม่สุด
+     ของแต่ละชนิดมาจับคู่กันเฉย ๆ จะได้ใบงานของวันหนึ่งคู่กับ OEE ของอีกวัน
+  3. ไฟล์ต้องใหม่พอ (ภายใน MAX_AGE_DAYS วัน) ไม่งั้นหยุดและเตือน
+     กันกรณีลืม export แล้วเผลอเอาไฟล์เก่ามาอัปเดตซ้ำ
+
+รันเดี่ยว ๆ ได้:  python etl_prepare.py
+"""
+
+import datetime as dt
+import glob
+import os
+import re
+import shutil
+import sys
+
+DEPT_DIR = (
+    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
+    r"\ฝ่ายซ่อมบำรุงรักษา"
+)
+RAW_ROOT = os.path.join(DEPT_DIR, "00_ข้อมูลดิบ_MOS")
+DOWNLOADS = os.path.join(os.path.expanduser("~"), "Downloads")
+
+PATTERNS = {
+    "ใบงานรายเครื่อง": "r-jobtran-mc*.xls*",
+    "OEE": "r-jobtran-oee*.xls*",
+}
+STAMP = re.compile(r"_(\d{2})(\d{2})(\d{2})(\d{6})")   # _YYMMDDhhmmss
+MAX_AGE_DAYS = 3
+
+
+def file_date(path: str):
+    """วันที่จากชื่อไฟล์ → (date ค.ศ., ชื่อโฟลเดอร์ พ.ศ.) หรือ None"""
+    m = STAMP.search(os.path.basename(path))
+    if not m:
+        return None
+    yy, mm, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        d = dt.date(2000 + yy, mm, dd)
+    except ValueError:
+        return None
+    return d, f"{d.year + 543}-{d.month:02d}-{d.day:02d}"
+
+
+def scan():
+    """จัดกลุ่มไฟล์ใน Downloads ตามวันที่ในชื่อไฟล์"""
+    by_day = {}
+    for label, pat in PATTERNS.items():
+        for f in glob.glob(os.path.join(DOWNLOADS, pat)):
+            info = file_date(f)
+            if not info:
+                continue
+            d, _ = info
+            by_day.setdefault(d, {}).setdefault(label, []).append(f)
+    return by_day
+
+
+def main() -> int:
+    by_day = scan()
+    if not by_day:
+        print("  ไม่พบไฟล์ export จาก MOS ในโฟลเดอร์ Downloads เลย")
+        print(f"  ดึง export จาก MOS มาไว้ที่ {DOWNLOADS} ก่อน")
+        return 1
+
+    today = dt.date.today()
+    newest_day = max(by_day)
+    age = (today - newest_day).days
+    group = by_day[newest_day]
+    _, folder = file_date(group[next(iter(group))][0])
+
+    print(f"  ไฟล์ใหม่ที่สุดใน Downloads เป็นของวันที่ {folder} (อายุ {age} วัน)")
+
+    if age > MAX_AGE_DAYS:
+        print(f"\n  หยุด — ไฟล์เก่าเกิน {MAX_AGE_DAYS} วัน")
+        print("  แปลว่ายังไม่ได้ดึง export ของวันนี้ ให้ดึงจาก MOS ก่อนแล้วรันใหม่")
+        return 1
+
+    missing = [k for k in PATTERNS if k not in group]
+    if "ใบงานรายเครื่อง" in missing:
+        print("\n  หยุด — ไม่มีไฟล์ใบงานรายเครื่อง (r-jobtran-mc) ของวันนี้")
+        return 1
+    if missing:
+        print(f"\n  หยุด — วันที่ {folder} มีแต่ใบงาน ขาดไฟล์ {', '.join(missing)}")
+        print("  ต้องมีครบทั้งสองไฟล์และเป็นของวันเดียวกัน จึงจะอัปเดตได้")
+        print("  ดึง export ที่ขาดจาก MOS ก่อนแล้วรันใหม่")
+        return 1
+
+    dest = os.path.join(RAW_ROOT, folder)
+    os.makedirs(dest, exist_ok=True)
+    print(f"  โฟลเดอร์ปลายทาง: {folder}\n")
+
+    moved = skipped = 0
+    for label in PATTERNS:
+        # ถ้ามีหลายไฟล์ของชนิดเดียวกันในวันเดียวกัน เอาตัว export ล่าสุด
+        src = max(group[label], key=lambda p: os.path.basename(p))
+        tgt = os.path.join(dest, os.path.basename(src))
+        if os.path.exists(tgt):
+            print(f"  มีอยู่แล้ว ข้าม: {os.path.basename(src)}")
+            skipped += 1
+            continue
+        shutil.move(src, tgt)
+        print(f"  ย้ายแล้ว: {os.path.basename(src)}")
+        moved += 1
+
+    print(f"\n  ย้าย {moved} ไฟล์ ข้าม {skipped} ไฟล์ เข้าโฟลเดอร์ {folder}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

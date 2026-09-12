@@ -26,7 +26,6 @@ import streamlit as st
 
 import auth
 import data_paths
-import mos_loader
 
 # ---------------------------------------------------------------------------
 # ตั้งค่าหน้าเพจ
@@ -174,12 +173,10 @@ def folder_signature() -> tuple:
     """ลายเซ็นแหล่งข้อมูล = (ชื่อไฟล์, เวลาแก้ไข) ของไฟล์ raw ทุกไฟล์ + ฐาน MTBF/OEE
     — ไฟล์ไหนถูก sync/อัปเดต ลายเซ็นเปลี่ยน แอปจะโหลดใหม่และรีเฟรชเอง"""
     files = sorted(glob.glob(os.path.join(DATA_DIR, FILE_PATTERN)))
-    # ไฟล์ดิบจาก MOS ในโฟลเดอร์ raw — ต้องอยู่ในลายเซ็นด้วย ไม่งั้นวางไฟล์ใหม่
-    # แล้วแอปจะยังใช้ cache เก่า เพราะไฟล์ master ไม่ได้ถูกแก้แล้ว
-    files += sorted(glob.glob(os.path.join(mos_loader.RAW_DIR, mos_loader.RAW_GLOB)))
     files += [p for p in (MASTER_PATH, MTBF_PATH, OEE_PATH, REGISTRY_PATH, REPAIR_PATH)
               if os.path.exists(p)]
-    return (("logic", DATA_LOGIC_VERSION),) + tuple(
+    # รวมลายเซ็นของ parquet ที่ ETL สร้างด้วย — ETL รันใหม่เมื่อไร หน้าจอรีเฟรชเมื่อนั้น
+    return (("logic", DATA_LOGIC_VERSION),) + data_paths.workcenter_signature() + tuple(
         (os.path.basename(p), os.path.getmtime(p)) for p in files
     )
 
@@ -219,10 +216,10 @@ def load_data(sig: tuple) -> pd.DataFrame:
     # --- แหล่งที่ 1: ฐานข้อมูลหลัก (ชีต Data ~3 แสนแถว ใช้ calamine อ่านในสิบกว่าวินาที) ---
     if os.path.exists(MASTER_PATH):
         try:
-            # อ่านผ่าน mos_loader — รวมไฟล์ดิบจาก MOS ในโฟลเดอร์ raw เข้ากับ
-            # ฐานประวัติจากไฟล์ master ตัดแถวซ้ำ แล้วคืนตารางหน้าตาเดียวกับ
-            # ชีต Data เดิมทุกประการ (ตรวจแล้วตรงกันแถวต่อแถว 414,211 แถว)
-            df = mos_loader.load_workcenter()
+            # อ่าน parquet ที่ ETL ของฝ่ายสร้างให้ (00_ETL_Pipeline/update_mos.py)
+            # คอลัมน์เหมือนชีต Data ของไฟล์ master ทุกประการ แต่อ่านเร็วกว่า 100 เท่า
+            # กฎการแปลงข้อมูลอยู่ใน update_mos.py ที่เดียว ห้ามเขียนซ้ำที่นี่
+            df = pd.read_parquet(data_paths.workcenter_parquet())
             need = ["Machine", "พนักงาน", "Job", "หมวดJob", "Qty", "Start", "End"]
             if all(c in df.columns for c in need):
                 df = df.rename(columns={

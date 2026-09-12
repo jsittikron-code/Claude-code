@@ -85,12 +85,51 @@ def find(filename: str, candidates: tuple = ()) -> str:
 
 
 # ---------------------------------------------------------------------------
+# ข้อมูล Workcenter — ออกมาจาก ETL ตัวเดียวของฝ่าย
+# ---------------------------------------------------------------------------
+ETL_DIR = os.path.join(DEPT_DIR, "00_ETL_Pipeline")
+WC_PARQUET = os.path.join(ETL_DIR, "parquet", "workcenter_data.parquet")
+WC_MASTER = os.path.join(DEPT_DIR, "9.workcenter operation",
+                         "Workcenter_ฐานข้อมูลหลัก_2569.xlsx")
+
+
+def workcenter_parquet() -> str:
+    """ไฟล์ parquet ที่ 00_ETL_Pipeline/update_mos.py สร้างให้ทุกครั้งที่รัน
+
+    นี่คือแหล่งข้อมูล Workcenter เพียงแหล่งเดียวที่แดชบอร์ดควรอ่าน
+    กฎการแปลงข้อมูลทั้งหมดอยู่ในบล็อก CONFIG ของ update_mos.py ที่เดียว
+    ห้ามเขียนกฎซ้ำที่นี่หรือในแดชบอร์ด (ดู 00_ETL_Pipeline/อ่านก่อน.md)
+    """
+    if not os.path.exists(WC_PARQUET):
+        raise DataFolderNotFound(
+            "ไม่พบไฟล์ข้อมูล Workcenter\n\n"
+            f"มองหา: {WC_PARQUET}\n\n"
+            "ไฟล์นี้ถูกสร้างโดย ETL ของฝ่าย รันด้วยคำสั่ง\n"
+            "    python \"00_ETL_Pipeline\\update_mos.py\" --check\n"
+            "    python \"00_ETL_Pipeline\\update_mos.py\"\n\n"
+            "โดยต้องวางไฟล์ export จาก MOS ไว้ที่\n"
+            "    00_ข้อมูลดิบ_MOS\\<ปี พ.ศ.-เดือน-วัน>\\"
+        )
+    return WC_PARQUET
+
+
+def workcenter_signature() -> tuple:
+    """ลายเซ็นข้อมูล Workcenter — เปลี่ยนเมื่อ ETL รันใหม่ ใช้เป็นกุญแจแคช"""
+    out = []
+    for p in (WC_PARQUET, WC_MASTER):
+        out.append((os.path.basename(p),
+                    round(os.path.getmtime(p), 3) if os.path.exists(p) else 0))
+    return tuple(out)
+
+
+# ---------------------------------------------------------------------------
 # ตรวจสุขภาพแหล่งข้อมูล — python data_paths.py
 # ---------------------------------------------------------------------------
 DATASETS = {
     "Workcenter master": r"9.workcenter operation\Workcenter_ฐานข้อมูลหลัก_2569.xlsx",
-    "Workcenter raw/": r"9.workcenter operation\raw",
-    "Workcenter cache/": r"9.workcenter operation\cache",
+    "parquet (ETL สร้าง)": r"00_ETL_Pipeline\parquet\workcenter_data.parquet",
+    "โฟลเดอร์ข้อมูลดิบ MOS": r"00_ข้อมูลดิบ_MOS",
+    "สคริปต์ ETL": r"00_ETL_Pipeline\update_mos.py",
     "MTBF-MTTR master": r"2.เรื่องMTBF-MTTR\รายละเอียด\MTBF-MTTR_ฐานข้อมูลหลัก_2569.xlsx",
     "OEE master": r"3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx",
     "ทะเบียนเครื่องจักร": r"5.งานทะเบียนเครื่องจักร\ทะเบียนเครื่องจักร_DataMaster_2569.xlsx",
@@ -145,6 +184,16 @@ def health() -> bool:
     except DataFolderNotFound as e:
         print("\n%s" % e)
         ok = False
+
+    # รอบ ETL ล่าสุด — บอกว่าวางไฟล์ดิบถึงวันไหนแล้ว
+    raw_root = os.path.join(DEPT_DIR, "00_ข้อมูลดิบ_MOS")
+    if os.path.isdir(raw_root):
+        days = sorted(d for d in os.listdir(raw_root)
+                      if os.path.isdir(os.path.join(raw_root, d)))
+        print("\nโฟลเดอร์ข้อมูลดิบที่วางไว้แล้ว %d รอบ" % len(days))
+        for d in days[-3:]:
+            n = len(os.listdir(os.path.join(raw_root, d)))
+            print("  %-14s %d ไฟล์" % (d, n))
 
     print("\nผล: %s" % ("ครบทุกชุด" if ok else "มีชุดที่หายไป ดูรายการข้างบน"))
     return ok
