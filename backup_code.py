@@ -26,6 +26,14 @@ import shutil
 import subprocess
 import sys
 
+# git hook เรียกสคริปต์นี้โดยไม่ได้ตั้ง encoding ให้ คอนโซลจึงพิมพ์ภาษาไทยไม่ได้
+# และโยน UnicodeEncodeError ทั้งที่งานสำรองสำเร็จไปแล้ว จึงบังคับ UTF-8 ที่นี่เลย
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 PROJ = os.path.dirname(os.path.abspath(__file__))
 DEST = (
     r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
