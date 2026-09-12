@@ -46,8 +46,54 @@ def run(args, label: str) -> int:
         return 1
 
 
+def snapshot():
+    """อ่านสถานะข้อมูลปัจจุบัน — ใช้เทียบก่อนกับหลังเพื่อพิสูจน์ว่าเขียนจริง
+
+    มีไว้เพราะบทเรียนเมื่อ 2026-09-12: หน้าจอขึ้นว่าจบงานแล้ว แต่ฐานข้อมูล
+    ไม่ได้ถูกเขียน และไม่มีใครรู้จนผ่านไปสองชั่วโมง ข้อความว่า "เสร็จ" อย่างเดียว
+    เชื่อไม่ได้ ต้องเอาตัวเลขจริงมากางให้ดู
+    """
+    try:
+        import pandas as pd
+        import data_paths
+        df = pd.read_parquet(data_paths.workcenter_parquet())
+        s = pd.to_datetime(df["Start"], errors="coerce")
+        return len(df), s.max()
+    except Exception:
+        return None, None
+
+
+def report(before_rows, before_last) -> None:
+    """กางตัวเลขให้เห็นว่าข้อมูลเพิ่มขึ้นจริงหรือไม่"""
+    import datetime as dt
+
+    rows, last = snapshot()
+    if rows is None:
+        print("  อ่านไฟล์ข้อมูลเพื่อตรวจผลไม่ได้ ให้เปิดแดชบอร์ดดูเองอีกที")
+        return
+
+    added = rows - before_rows if before_rows else None
+    print(f"  แถวข้อมูลรวม     {rows:,}" + (f"   (เพิ่มขึ้น {added:,} แถว)" if added is not None else ""))
+    print(f"  ข้อมูลล่าสุดถึง   {last:%Y-%m-%d %H:%M}")
+
+    if added == 0:
+        print()
+        print("  *** ไม่มีแถวใหม่เข้ามาเลย ***")
+        print("  แปลว่า export รอบนี้ไม่มีข้อมูลที่ยังไม่เคยเข้าฐาน")
+        print("  ถ้าเพิ่งดึงไฟล์มาสด ๆ แล้วยังเป็นแบบนี้ ให้บอกคนดูแลระบบ")
+        return
+
+    if last is not None:
+        gap = (dt.datetime.now() - last.to_pydatetime()).total_seconds() / 3600
+        if gap > 20:
+            print()
+            print(f"  *** ข้อมูลล่าสุดเก่ากว่าปัจจุบัน {gap:.0f} ชั่วโมง ***")
+            print("  ตรวจว่าดึง export ถูกไฟล์หรือไม่")
+
+
 def main() -> int:
     head("อัปเดตข้อมูล MOS ประจำวัน")
+    before_rows, _ = snapshot()
     if not os.path.exists(UPDATE_MOS):
         print("  ไม่พบสคริปต์ ETL ของฝ่ายที่")
         print("  " + UPDATE_MOS)
@@ -92,6 +138,8 @@ def main() -> int:
     rc = run([os.path.join(HERE, "etl_recalc_excel.py")], "etl_recalc_excel.py")
 
     head("เสร็จเรียบร้อย" if rc == 0 else "เสร็จแล้ว แต่ขั้น 4 มีปัญหา")
+    report(before_rows, None)
+    print()
     if rc == 0:
         print("  แดชบอร์ดพอร์ต 8503 และ 8507 จะเห็นข้อมูลใหม่ในรอบรีเฟรชถัดไป")
         print("  Power BI ให้กด Refresh All เอง")
