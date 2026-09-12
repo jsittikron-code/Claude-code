@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul
-title เปิด Firewall พอร์ต Dashboard ทั้งหมด (8503-8509)
+title เปิด Firewall พอร์ต Dashboard ทั้งหมด (8503-8511)
 
 echo ============================================================
-echo   เปิดพอร์ต 8503-8509 ใน Windows Firewall
+echo   เปิดพอร์ต 8503-8511 ใน Windows Firewall
 echo   เพื่อให้เพื่อนร่วมงานในเน็ตเวิร์กเดียวกันเข้าดู dashboard ได้
 echo.
 echo     8503 = ศูนย์ปฏิบัติการเครื่องจักร (Workcenter)
@@ -13,6 +13,8 @@ echo     8506 = ระบบบริหาร OEE
 echo     8507 = Dashboard ภาพรวม (Overview)
 echo     8508 = Power BI Academy (ระบบเรียนและฝึกทักษะ Power BI)
 echo     8509 = Python Academy (ระบบเรียนและฝึกเขียน Python)
+echo     8510 = Dashboard ฝ่ายผลิต
+echo     8511 = Dashboard วิศวกรรมซ่อมบำรุง
 echo ============================================================
 echo.
 
@@ -26,15 +28,17 @@ if %errorLevel% neq 0 (
 )
 
 echo [1/2] ลบ rule เดิม (ถ้ามี)...
+netsh advfirewall firewall delete rule name="MDF Dashboards 8503-8511" >nul 2>&1
+REM ลบ rule ชื่อเดิมสมัยที่ยังมีแค่ 8503-8509 ด้วย ไม่งั้นจะค้างเป็น rule ซ้ำซ้อน
 netsh advfirewall firewall delete rule name="MDF Dashboards 8503-8509" >nul 2>&1
 
-echo [2/2] เพิ่ม rule ใหม่ (พอร์ต 8503-8509)...
-netsh advfirewall firewall add rule name="MDF Dashboards 8503-8509" dir=in action=allow protocol=TCP localport=8503-8509 profile=domain,private
+echo [2/2] เพิ่ม rule ใหม่ (พอร์ต 8503-8511)...
+netsh advfirewall firewall add rule name="MDF Dashboards 8503-8511" dir=in action=allow protocol=TCP localport=8503-8511 profile=domain,private
 
 echo.
 if %errorLevel% equ 0 (
     echo ============================================================
-    echo   สำเร็จ! เปิดพอร์ต 8503-8509 เรียบร้อย
+    echo   สำเร็จ! เปิดพอร์ต 8503-8511 เรียบร้อย
     echo ============================================================
     echo.
     echo ขั้นตอนต่อไป:
@@ -48,7 +52,7 @@ if %errorLevel% equ 0 (
     echo             และเครื่องนี้ต้องเปิดพร้อมรันแอปอยู่ตลอด
 ) else (
     echo เพิ่ม rule ไม่สำเร็จ - อาจถูกนโยบายของบริษัทล็อกไว้
-    echo กรุณาติดต่อฝ่าย IT เพื่อขอเปิดพอร์ต 8503-8509 (TCP ขาเข้า)
+    echo กรุณาติดต่อฝ่าย IT เพื่อขอเปิดพอร์ต 8503-8511 (TCP ขาเข้า)
 )
 echo.
 pause

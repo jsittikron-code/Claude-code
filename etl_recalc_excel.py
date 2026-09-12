@@ -85,11 +85,59 @@ def verify() -> bool:
     return True
 
 
+def export_parquet() -> bool:
+    """แปลงชีต Report1 ของไฟล์ OEE เป็น parquet ให้แดชบอร์ดอ่าน
+
+    ทำไมต้องทำตรงนี้ ไม่ใช่ใน update_mos.py
+        ตอน ETL เขียนเสร็จ คอลัมน์สูตรยังไม่ถูกคำนวณ ถ้า export ตอนนั้นจะได้ค่าว่าง
+        ต้องรอ Excel คำนวณและเซฟก่อน (ฟังก์ชัน recalc ข้างบน) แล้วค่อย export
+
+    ทำไมต้องมี parquet
+        ไฟล์ OEE ถูกอ่านโดยแดชบอร์ด 7 จาก 9 ตัว ถ้าไฟล์ถูกเปิดค้างใน Excel
+        หรือ OneDrive กำลัง sync จอจะเสียพร้อมกันหมด อ่านจาก parquet แทนตัดปัญหานี้
+        และเร็วกว่าด้วย
+    """
+    import pandas as pd
+
+    src = os.path.join(DEPT_DIR, VERIFY[0])
+    out_dir = os.path.join(DEPT_DIR, "00_ETL_Pipeline", "parquet")
+    out = os.path.join(out_dir, "oee_report1.parquet")
+    if not os.path.exists(src):
+        print("  ข้าม export parquet: ไม่พบไฟล์ OEE")
+        return True
+    try:
+        df = pd.read_excel(src, sheet_name="Report1", engine="calamine")
+
+        # MOS เก็บ Trans_date ปนกัน บางแถวเป็นวันที่จริง บางแถวเป็นข้อความ
+        # parquet รับคอลัมน์ที่มีสองชนิดไม่ได้ ต้องแปลงให้เป็นชนิดเดียวก่อน
+        df["Trans_date"] = pd.to_datetime(df["Trans_date"], errors="coerce")
+        for c in df.columns:
+            if df[c].dtype == "object":
+                num = pd.to_numeric(df[c], errors="coerce")
+                # คอลัมน์ที่แปลงเป็นตัวเลขได้เกือบหมด ถือว่าเป็นตัวเลขที่ปนข้อความ
+                df[c] = num if num.notna().sum() >= df[c].notna().sum() * 0.9 \
+                    else df[c].astype("string")
+
+        os.makedirs(out_dir, exist_ok=True)
+        tmp = out + ".tmp"
+        df.to_parquet(tmp, index=False)
+        os.replace(tmp, out)      # เปลี่ยนชื่อทับทีเดียว กันไฟล์ครึ่ง ๆ ตอน OneDrive sync
+        print("  export parquet: %d แถว %d คอลัมน์ (%.1f MB)"
+              % (len(df), df.shape[1], os.path.getsize(out) / 1e6))
+        return True
+    except Exception as e:
+        print(f"  export parquet ไม่สำเร็จ: {e}")
+        print("  ไม่กระทบการอัปเดต แดชบอร์ดจะถอยไปอ่านไฟล์ Excel เอง")
+        return True   # ไม่ถือเป็นความล้มเหลวของทั้งงาน
+
+
 def main() -> int:
     print("สั่ง Excel คำนวณสูตรและเซฟ")
     if not recalc(TARGETS):
         return 1
-    return 0 if verify() else 1
+    ok = verify()
+    export_parquet()
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

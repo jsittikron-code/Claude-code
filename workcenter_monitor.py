@@ -46,7 +46,6 @@ DATA_DIR = (
     r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
     r"\ฝ่ายซ่อมบำรุงรักษา\9.workcenter operation"
 )
-FILE_PATTERN = "raw_*.xls*"
 
 # ฐานข้อมูลหลัก Workcenter (ชีต Data รวมธุรกรรมทุกวันตั้งแต่ต้นปี) — แหล่งข้อมูลอันดับ 1
 # ถ้าไฟล์นี้ไม่มี/อ่านไม่ได้ ค่อยถอยไปอ่านไฟล์ raw_*.xls รายวันแบบเดิม
@@ -89,7 +88,6 @@ MTBF_SHEETS = {
 }
 
 # คอลัมน์ที่ต้องมี (แถวหัวตารางอยู่บรรทัดที่ 3 ของชีต Report2)
-REQUIRED_COLUMNS = ["Machine", "Name", "Job", "Qty", "Start", "End", "Reason"]
 
 # กลุ่มเครื่องจักรตามรหัสนำหน้า (ชุดเดียวกับ monitor.py)
 GROUP_NAMES = {
@@ -170,12 +168,12 @@ DATA_LOGIC_VERSION = "2026-08-04.1-std-colors"
 
 
 def folder_signature() -> tuple:
-    """ลายเซ็นแหล่งข้อมูล = (ชื่อไฟล์, เวลาแก้ไข) ของไฟล์ raw ทุกไฟล์ + ฐาน MTBF/OEE
-    — ไฟล์ไหนถูก sync/อัปเดต ลายเซ็นเปลี่ยน แอปจะโหลดใหม่และรีเฟรชเอง"""
-    files = sorted(glob.glob(os.path.join(DATA_DIR, FILE_PATTERN)))
-    files += [p for p in (MASTER_PATH, MTBF_PATH, OEE_PATH, REGISTRY_PATH, REPAIR_PATH)
-              if os.path.exists(p)]
-    # รวมลายเซ็นของ parquet ที่ ETL สร้างด้วย — ETL รันใหม่เมื่อไร หน้าจอรีเฟรชเมื่อนั้น
+    """ลายเซ็นแหล่งข้อมูล = (ชื่อไฟล์, เวลาแก้ไข) ของทุกไฟล์ที่หน้านี้อ่าน
+    — ไฟล์ไหนถูก sync/อัปเดต ลายเซ็นเปลี่ยน แอปจะโหลดใหม่และรีเฟรชเอง
+
+    รวมลายเซ็นของ parquet ที่ ETL สร้างด้วย ETL รันใหม่เมื่อไร หน้าจอรีเฟรชเมื่อนั้น"""
+    files = [p for p in (MTBF_PATH, OEE_PATH, REGISTRY_PATH, REPAIR_PATH)
+             if os.path.exists(p)]
     return (("logic", DATA_LOGIC_VERSION),) + data_paths.workcenter_signature() + tuple(
         (os.path.basename(p), os.path.getmtime(p)) for p in files
     )
@@ -212,85 +210,60 @@ def _finish(df: pd.DataFrame) -> pd.DataFrame:
 
 @st.cache_data(show_spinner="กำลังอ่านฐานข้อมูล Workcenter จาก OneDrive...", ttl="2h")
 def load_data(sig: tuple) -> pd.DataFrame:
-    # sig เป็นส่วนหนึ่งของ cache key — ไฟล์ในโฟลเดอร์เปลี่ยนเมื่อไร cache เก่าถูกทิ้งทันที
-    # --- แหล่งที่ 1: ฐานข้อมูลหลัก (ชีต Data ~3 แสนแถว ใช้ calamine อ่านในสิบกว่าวินาที) ---
-    if os.path.exists(MASTER_PATH):
-        try:
-            # อ่าน parquet ที่ ETL ของฝ่ายสร้างให้ (00_ETL_Pipeline/update_mos.py)
-            # คอลัมน์เหมือนชีต Data ของไฟล์ master ทุกประการ แต่อ่านเร็วกว่า 100 เท่า
-            # กฎการแปลงข้อมูลอยู่ใน update_mos.py ที่เดียว ห้ามเขียนซ้ำที่นี่
-            df = pd.read_parquet(data_paths.workcenter_parquet())
-            need = ["Machine", "พนักงาน", "Job", "หมวดJob", "Qty", "Start", "End"]
-            if all(c in df.columns for c in need):
-                df = df.rename(columns={
-                    "พนักงาน": "Name",
-                    "หมวดเครื่อง": "Group",
-                    "Duration(นาที)": "DurationMin",
-                    "แหล่งข้อมูล": "ไฟล์ต้นทาง",
-                })
-                df = df[df["Machine"].notna()].copy()
-                df["Machine"] = df["Machine"].astype(str).str.strip()
-                df["Start"] = pd.to_datetime(df["Start"], errors="coerce")
-                df["End"] = pd.to_datetime(df["End"], errors="coerce")
-                df = df.dropna(subset=["Start", "End"])
-                df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce").fillna(0)
-                if "DurationMin" in df.columns:
-                    df["DurationMin"] = pd.to_numeric(df["DurationMin"], errors="coerce")
-                    df["DurationMin"] = df["DurationMin"].fillna(
-                        (df["End"] - df["Start"]).dt.total_seconds() / 60)
-                else:
-                    df["DurationMin"] = (df["End"] - df["Start"]).dt.total_seconds() / 60
-                df["IsDowntime"] = ~df["หมวดJob"].astype(str).str.startswith("PROD")
-                if "Reason" not in df.columns:
-                    df["Reason"] = pd.NA
-                if "ไฟล์ต้นทาง" not in df.columns:
-                    df["ไฟล์ต้นทาง"] = os.path.basename(MASTER_PATH)
-                if "Group" not in df.columns:
-                    df["Group"] = pd.NA
-                df["Group"] = df["Group"].astype("string").str.strip().replace(
-                    {"": pd.NA, "nan": pd.NA}
-                ).fillna(
-                    df["Machine"].str.extract(r"^([A-Za-z]+)")[0].str.upper()
-                    .map(lambda g: GROUP_NAMES.get(g, g))
-                )
-                return _finish(df)
-        except Exception:
-            pass  # อ่านฐานหลักไม่ได้ (เช่นถูกล็อกระหว่าง sync) — ถอยไปไฟล์ raw
+    """อ่านข้อมูล Workcenter จาก parquet ที่ ETL ของฝ่ายสร้างให้
 
-    # --- แหล่งที่ 2 (สำรอง): ไฟล์ raw_*.xls รายวันแบบเดิม ---
-    frames = []
-    for path in glob.glob(os.path.join(DATA_DIR, FILE_PATTERN)):
-        try:
-            df = pd.read_excel(path, sheet_name=0, header=2)
-        except Exception:
-            continue  # ข้ามไฟล์ที่เปิดล็อกอยู่หรือรูปแบบไม่ตรง
-        if not all(c in df.columns for c in REQUIRED_COLUMNS):
-            continue
-        df["ไฟล์ต้นทาง"] = os.path.basename(path)
-        frames.append(df)
-    if not frames:
+    มีแหล่งเดียว ไม่มีทางสำรอง — เดิมมีทางสำรองที่อ่านไฟล์ raw_*.xls แต่เอาออกแล้ว
+    ด้วยเหตุผล 2 ข้อ หนึ่งคือมันใช้กฎจำแนกงานหยุดเครื่องคนละชุด (ดูว่ามี Reason
+    กรอกไว้ไหม แทนที่จะดูหมวดJob) ซึ่งมองข้ามงานหยุดเครื่องไป 1,082 จาก 6,603 แถว
+    สองคือไฟล์ที่มันจะไปอ่านไม่มีอยู่จริงแล้วตั้งแต่ย้ายมาใช้ ETL กลาง
+
+    ห้ามกลืน exception ที่นี่ — ถ้าอ่านไม่ได้ต้องให้ error ขึ้นหน้าจอ
+    ดีกว่าเงียบแล้วแสดงตัวเลขจากกฎคนละชุดโดยไม่มีใครรู้
+    """
+    # sig เป็นส่วนหนึ่งของ cache key — ETL รันใหม่เมื่อไร cache เก่าถูกทิ้งทันที
+    # กฎการแปลงข้อมูลอยู่ใน update_mos.py ที่เดียว ห้ามเขียนซ้ำที่นี่
+    df = pd.read_parquet(data_paths.workcenter_parquet())
+
+    need = ["Machine", "พนักงาน", "Job", "หมวดJob", "Qty", "Start", "End"]
+    missing = [c for c in need if c not in df.columns]
+    if missing:
         raise ValueError(
-            f"อ่านฐานข้อมูลไม่ได้เลย — ตรวจโฟลเดอร์\n{DATA_DIR}\n\n"
-            f"ลำดับที่ลองอ่าน: 1) {os.path.basename(MASTER_PATH)} (ชีต Data) "
-            f"2) ไฟล์ {FILE_PATTERN} (รายงาน r-jobtran-mc ชีต Report2)\n"
-            "ถ้าไฟล์กำลัง sync จาก OneDrive อยู่ รอสักครู่แล้วกด 'โหลดข้อมูลใหม่'"
+            "ไฟล์ข้อมูล Workcenter ขาดคอลัมน์: " + ", ".join(missing) + "\n\n"
+            "แปลว่าโครงสร้างที่ ETL สร้างเปลี่ยนไป ให้ตรวจ update_mos.py\n"
+            f"ไฟล์ที่อ่าน: {data_paths.WC_PARQUET}"
         )
 
-    df = pd.concat(frames, ignore_index=True)
+    df = df.rename(columns={
+        "พนักงาน": "Name",
+        "หมวดเครื่อง": "Group",
+        "Duration(นาที)": "DurationMin",
+        "แหล่งข้อมูล": "ไฟล์ต้นทาง",
+    })
     df = df[df["Machine"].notna()].copy()
+    df["Machine"] = df["Machine"].astype(str).str.strip()
     df["Start"] = pd.to_datetime(df["Start"], errors="coerce")
     df["End"] = pd.to_datetime(df["End"], errors="coerce")
     df = df.dropna(subset=["Start", "End"])
     df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce").fillna(0)
-
-    # ไฟล์ raw หลายไฟล์มีข้อมูลซ้อนวันกัน — ตัดแถวซ้ำออก
-    df = df.drop_duplicates(subset=["Machine", "Job", "Item", "Start", "End"], keep="last")
-
-    df["Machine"] = df["Machine"].astype(str).str.strip()
-    prefix = df["Machine"].str.extract(r"^([A-Za-z]+)")[0].str.upper()
-    df["Group"] = prefix.map(lambda g: GROUP_NAMES.get(g, g))
-    df["DurationMin"] = (df["End"] - df["Start"]).dt.total_seconds() / 60
-    df["IsDowntime"] = df["Reason"].notna()
+    if "DurationMin" in df.columns:
+        df["DurationMin"] = pd.to_numeric(df["DurationMin"], errors="coerce")
+        df["DurationMin"] = df["DurationMin"].fillna(
+            (df["End"] - df["Start"]).dt.total_seconds() / 60)
+    else:
+        df["DurationMin"] = (df["End"] - df["Start"]).dt.total_seconds() / 60
+    df["IsDowntime"] = ~df["หมวดJob"].astype(str).str.startswith("PROD")
+    if "Reason" not in df.columns:
+        df["Reason"] = pd.NA
+    if "ไฟล์ต้นทาง" not in df.columns:
+        df["ไฟล์ต้นทาง"] = os.path.basename(data_paths.WC_PARQUET)
+    if "Group" not in df.columns:
+        df["Group"] = pd.NA
+    df["Group"] = df["Group"].astype("string").str.strip().replace(
+        {"": pd.NA, "nan": pd.NA}
+    ).fillna(
+        df["Machine"].str.extract(r"^([A-Za-z]+)")[0].str.upper()
+        .map(lambda g: GROUP_NAMES.get(g, g))
+    )
     return _finish(df)
 
 

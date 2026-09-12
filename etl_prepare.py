@@ -35,7 +35,10 @@ PATTERNS = {
     "OEE": "r-jobtran-oee*.xls*",
 }
 STAMP = re.compile(r"_(\d{2})(\d{2})(\d{2})(\d{6})")   # _YYMMDDhhmmss
-MAX_AGE_DAYS = 3
+# ยอมรับแค่ export ของวันนี้หรือเมื่อวาน — เผื่อกรณีดึงตอนเย็นแล้วมารันเช้าวันรุ่งขึ้น
+# ตั้งหลวมกว่านี้ไม่ได้ เพราะใน Downloads มี export เก่าค้างอยู่เป็นร้อยไฟล์
+# ถ้าไฟล์ของวันนี้ถูกใช้ไปแล้ว สคริปต์จะถอยไปหยิบไฟล์เก่ามาใช้แทนโดยไม่มีใครรู้
+MAX_AGE_DAYS = 1
 
 
 def file_date(path: str):
@@ -95,6 +98,17 @@ def main() -> int:
         return 1
 
     dest = os.path.join(RAW_ROOT, folder)
+
+    # ถ้าไฟล์ชุดนี้ถูกย้ายเข้าไปแล้ว ให้บอกแล้วผ่านไป ไม่ต้องหาไฟล์เก่ามาแทน
+    already = os.path.isdir(dest) and all(
+        os.path.exists(os.path.join(
+            dest, os.path.basename(max(group[k], key=lambda p: os.path.basename(p)))))
+        for k in PATTERNS)
+    if already:
+        print(f"\n  ไฟล์ชุดนี้อยู่ในโฟลเดอร์ {folder} แล้ว ไม่ต้องย้ายซ้ำ")
+        print("  ถ้าต้องการข้อมูลใหม่กว่านี้ ให้ดึง export รอบใหม่จาก MOS ก่อน")
+        return 0
+
     os.makedirs(dest, exist_ok=True)
     print(f"  โฟลเดอร์ปลายทาง: {folder}\n")
 
