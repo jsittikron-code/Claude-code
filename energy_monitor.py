@@ -98,16 +98,44 @@ div[data-testid="stVerticalBlock"][class*="st-key-card_"]:hover {
     transform: translateY(-2px);
 }
 
-/* ============ KPI การ์ด (คลาสจาก kpi_card) ============ */
+/* ============ กันกราฟหดตอนกดขยายเต็มจอ ============
+   Streamlit ขยายกราฟด้วย position:fixed + inset 0 (withFullScreenWrapper)
+   แต่ backdrop-filter และ transform สร้าง containing block ใหม่ inset 0 จึงอ้างอิง
+   กรอบการ์ดแทน viewport กราฟถูกบีบอยู่ในการ์ดเดิมพร้อมแถบเลื่อนแทนที่จะเต็มจอ
+   ตอนขยาย Streamlit ตั้ง body{overflow:hidden} ไว้ — ใช้เป็นสัญญาณปิดสองตัวนั้นชั่วคราว */
+body[style*="overflow: hidden"] div[data-testid="stVerticalBlock"][class*="st-key-card_"],
+body[style*="overflow:hidden"] div[data-testid="stVerticalBlock"][class*="st-key-card_"],
+body[style*="overflow: hidden"] div[data-testid="stExpander"] details,
+body[style*="overflow:hidden"] div[data-testid="stExpander"] details {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    transform: none !important;
+}
+
+/* ============ KPI การ์ด (คลาสจาก kpi_card) ============
+   ทุกใบสูงเท่ากัน · ไล่เฉดมุมเดียวกัน · หัวเรื่องบนสุด ข้อความรองชิดล่างเสมอ */
+[data-testid="stColumn"]:has(> div .kpi-card) { display: flex; }
+[data-testid="stColumn"]:has(> div .kpi-card) > div,
+[data-testid="stColumn"]:has(> div .kpi-card) [data-testid="stElementContainer"],
+[data-testid="stColumn"]:has(> div .kpi-card) [data-testid="stMarkdownContainer"] {
+    width: 100%;
+    height: 100%;
+}
 .kpi-card {
     --kpi-color: var(--neon-blue);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 128px;
+    box-sizing: border-box;
     background: linear-gradient(135deg,
-        color-mix(in srgb, var(--kpi-color) 13%, transparent),
-        rgba(255,255,255,.02));
+        color-mix(in srgb, var(--kpi-color) 13%, transparent) 0%,
+        color-mix(in srgb, var(--kpi-color) 4%, transparent) 55%,
+        rgba(255,255,255,.02) 100%);
     border: 1px solid color-mix(in srgb, var(--kpi-color) 35%, transparent);
     border-left: 4px solid var(--kpi-color);
     border-radius: 14px;
-    padding: 16px 20px;
+    padding: 14px 18px 12px;
     backdrop-filter: blur(10px);
     transition: box-shadow .3s ease, transform .3s ease, border-color .3s ease;
 }
@@ -117,13 +145,26 @@ div[data-testid="stVerticalBlock"][class*="st-key-card_"]:hover {
     box-shadow: 0 0 18px color-mix(in srgb, var(--kpi-color) 55%, transparent),
                 0 0 48px color-mix(in srgb, var(--kpi-color) 22%, transparent);
 }
-.kpi-title { font-size: .9rem; font-weight: 600; color: #9aa8bf; letter-spacing: .02em; }
-.kpi-value {
-    font-size: 1.9rem; font-weight: 800; line-height: 1.2;
-    color: var(--kpi-color);
-    text-shadow: 0 0 14px color-mix(in srgb, var(--kpi-color) 65%, transparent);
+.kpi-title {
+    font-size: .82rem; font-weight: 600; color: #9aa8bf; letter-spacing: .02em;
+    line-height: 1.3; min-height: 2.1em;      /* หัวเรื่อง 1 หรือ 2 บรรทัดก็สูงเท่ากัน */
 }
-.kpi-sub { font-size: .8rem; color: #7c8aa0; margin-top: 4px; }
+.kpi-value {
+    display: flex; align-items: baseline; gap: .3rem; flex-wrap: nowrap;
+    margin-top: 2px;
+    color: var(--kpi-color);
+    text-shadow: 0 0 14px color-mix(in srgb, var(--kpi-color) 60%, transparent);
+}
+/* ตัวเลขย่อขนาดตามความกว้างคอลัมน์แทนการตัดบรรทัด — การ์ดจึงสูงเท่ากันเสมอ */
+.kpi-num {
+    font-size: clamp(1.15rem, 1.85vw, 1.85rem);
+    font-weight: 800; line-height: 1.15; letter-spacing: -.01em; white-space: nowrap;
+}
+.kpi-unit { font-size: .92rem; font-weight: 700; opacity: .85; white-space: nowrap; }
+.kpi-sub {
+    font-size: .76rem; color: #7c8aa0; line-height: 1.35;
+    margin-top: auto; padding-top: 8px;        /* ดันชิดขอบล่าง ทุกใบเรียงตรงกัน */
+}
 
 /* ============ แท็บ: แถบเรืองแสง + เนื้อหาเฟดเข้า ============ */
 .stTabs [data-baseweb="tab-list"] {
@@ -271,6 +312,8 @@ DEMAND_RATE = 132.93        # บาท/kW ของ Demand ช่วง On-peak
 PF_PENALTY_RATE = 56.07     # บาท/kVAR ส่วนที่เกินเกณฑ์
 PF_KVAR_FACTOR = 0.6197     # เกณฑ์ kVAR = 61.97% ของ Demand สูงสุด (เท่ากับ PF 0.85)
 VAT_RATE = 0.07
+GRID_EF = 0.4999            # kgCO2e/kWh — Grid Emission Factor ไทย (อบก./TGO) ใช้ประมาณการ Scope 2
+TREE_ABSORB = 9.5           # kgCO2/ต้น/ปี — อัตราดูดซับโดยประมาณ ใช้แปลงเป็น "เทียบเท่าปลูกต้นไม้"
 
 THAI_MONTHS = {
     "มกราคม": 1, "กุมภาพันธ์": 2, "มีนาคม": 3, "เมษายน": 4,
@@ -397,9 +440,11 @@ def load_bill(path: str, year_be: int, file_mtime: float | None = None) -> pd.Da
     df["discount"] = df.get("discount", pd.Series(dtype=float)).fillna(0)
 
     base = (df["energy_on"] + df["energy_off"] + df["demand_charge"]
-            + df["ft_charge"] + df["pf_penalty"] + df["service"] - df["discount"])
+            + df["ft_charge"] + df["pf_penalty"] + df["service"])
     df["vat"] = base * df.get("vat_rate", pd.Series(dtype=float)).fillna(VAT_RATE)
-    df["total_cost"] = base + df["vat"]
+    # ส่วนลด/รายการปรับปรุงของ MEA ถูกหักหลัง VAT — ตรวจกับบิลจริง ก.พ. 69
+    # (รวมเดือนปัจจุบัน 900,147.24 − 69.90 = ยอดชำระ 900,077.34)
+    df["total_cost"] = base + df["vat"] - df["discount"]
     df["avg_rate"] = (df["total_cost"] / df["kwh"]).where(df["kwh"] > 0)
 
     # Load Factor = kWh ÷ (Demand สูงสุด × ชั่วโมงทั้งเดือน)
@@ -605,10 +650,21 @@ with st.sidebar:
     th_meter = st.slider("มิเตอร์ย่อยเปลี่ยนผิดปกติ (% ต่อเดือน)", 20, 200, 50, step=10)
     th_recon = st.slider("ยอดมิเตอร์ย่อยต่างจากบิล+Solar เกิน (%)", 5, 50, 15, step=5)
 
+    st.markdown("---")
+    st.header("🎯 งบประมาณ")
+    budget_year = st.number_input(
+        "งบค่าไฟทั้งปี (บาท)", min_value=0, value=0, step=100_000,
+        help="ใส่ 0 = ยังไม่ตั้งงบ — ใช้เทียบกับยอดคาดการณ์ทั้งปีในหน้าภาพรวม",
+    )
+
 # ---------------------------------------------------------------------------
 # เตรียมตารางรวมสำหรับทุกแท็บ
 # ---------------------------------------------------------------------------
 main = bills[MAIN_BILL]
+
+# เดือนที่มีข้อมูลบิลแล้ว — ตัวเลขที่เทียบข้ามแหล่ง (บิล vs Solar/มิเตอร์) ต้องใช้
+# เฉพาะเดือนชุดนี้ มิฉะนั้นช่วงต้นเดือนที่มิเตอร์ภายในมาก่อนบิล MEA จะเทียบคนละช่วงเวลา
+bill_months = set(main["month"].tolist())
 
 # พลังงานรายเดือน: ไฟจาก MEA แต่ละหม้อแปลง + Solar (long format สำหรับ stacked bar)
 mix_rows = []
@@ -620,12 +676,19 @@ solar = None
 if sub is not None:
     solar = (sub[sub["ประเภท"] == "Solar"].groupby("month")["kwh"].sum()
              .rename("solar_kwh").reset_index())
-    for _, r in solar.iterrows():
+    # กราฟภาพรวมแสดงเฉพาะเดือนที่มีบิลคู่กัน (เดือนที่มีแต่ Solar จะดูเหมือนโรงงานใช้ไฟนิดเดียว)
+    for _, r in solar[solar["month"].isin(bill_months)].iterrows():
         mix_rows.append({"month": r["month"], "แหล่ง": "Solar Rooftop", "kwh": r["solar_kwh"]})
 mix = pd.DataFrame(mix_rows)
 mix["เดือน"] = mix["month"].map(MONTH_LABEL)
 mix["รวมทั้งเดือน"] = mix.groupby("month")["kwh"].transform("sum")
 mix["สัดส่วน"] = mix["kwh"] / mix["รวมทั้งเดือน"] * 100
+# เทียบเดือนก่อนหน้า: ของแหล่งนั้นเอง และของยอดรวมทั้งเดือน
+mix = mix.sort_values(["แหล่ง", "month"]).reset_index(drop=True)
+mix["mom"] = mix.groupby("แหล่ง")["kwh"].pct_change() * 100
+_tot_mom = (mix.drop_duplicates("month").set_index("month")["รวมทั้งเดือน"]
+            .sort_index().pct_change() * 100)
+mix["mom_total"] = mix["month"].map(_tot_mom)
 
 month_order = [MONTH_LABEL[m] for m in sorted(mix["month"].unique())]
 SRC_COLORS = {"MEA 33/5": COLOR_GRID, "MEA 33/2": COLOR_GRID2, "Solar Rooftop": COLOR_SOLAR}
@@ -635,12 +698,20 @@ src_scale = alt.Scale(domain=src_domain, range=[SRC_COLORS[s] for s in src_domai
 
 def kpi_card(title: str, value_text: str, color: str, sub_text: str = ""):
     """การ์ด KPI แบบ glassmorphism — สไตล์อยู่ใน NEON_CSS (คลาส .kpi-card)
+    แยก "ตัวเลข" กับ "หน่วย" ให้หน่วยตัวเล็กลง การ์ดทุกใบจะสูงเท่ากันไม่ตกบรรทัด
     เขียน HTML บรรทัดเดียว ห้ามมี indent มิฉะนั้น Streamlit จะโชว์เป็น code block"""
+    # แยกเฉพาะรูปแบบ "<ตัวเลข> <หน่วย>" เช่น "1,241,367 kWh" · ค่าอย่าง "TOU 4.2.2"
+    # หรือ "ยังไม่ตั้งงบ" จะไม่ถูกแตะ
+    m = re.fullmatch(r"([+\-]?[\d,]+(?:\.\d+)?)\s+(.+)", value_text.strip())
+    value_html = (
+        f'<span class="kpi-num">{m.group(1)}</span><span class="kpi-unit">{m.group(2)}</span>'
+        if m else f'<span class="kpi-num">{value_text}</span>'
+    )
     sub_html = f'<div class="kpi-sub">{sub_text}</div>' if sub_text else ""
     card_html = (
         f'<div class="kpi-card" style="--kpi-color:{color};">'
         f'<div class="kpi-title">{title}</div>'
-        f'<div class="kpi-value">{value_text}</div>'
+        f'<div class="kpi-value">{value_html}</div>'
         f'{sub_html}'
         f'</div>'
     )
@@ -654,11 +725,12 @@ def month_axis():
 # ---------------------------------------------------------------------------
 # แท็บหลัก
 # ---------------------------------------------------------------------------
-tab_over, tab_bill, tab_sub, tab_solar, tab_alert, tab_data = st.tabs([
+tab_over, tab_bill, tab_sub, tab_solar, tab_sim, tab_alert, tab_data = st.tabs([
     ":material/factory: ภาพรวมพลังงาน",
     ":material/payments: บิล & ต้นทุน",
     ":material/electric_meter: มิเตอร์ย่อย",
     ":material/solar_power: Solar",
+    ":material/science: Simulate Demand",
     ":material/notification_important: แจ้งเตือน",
     ":material/table_view: ข้อมูล",
 ])
@@ -666,14 +738,16 @@ tab_over, tab_bill, tab_sub, tab_solar, tab_alert, tab_data = st.tabs([
 # --- 1) ภาพรวมพลังงาน ---
 with tab_over:
     grid_kwh = sum(b["kwh"].sum() for b in bills.values())
-    solar_kwh = float(solar["solar_kwh"].sum()) if solar is not None else 0.0
+    # นับ Solar เฉพาะเดือนที่มีบิลแล้ว ให้เทียบช่วงเวลาเดียวกันเสมอ
+    solar_kwh = (float(solar.loc[solar["month"].isin(bill_months), "solar_kwh"].sum())
+                 if solar is not None else 0.0)
     total_kwh = grid_kwh + solar_kwh
     total_cost = sum(b["total_cost"].sum() for b in bills.values())
     avg_rate = total_cost / grid_kwh if grid_kwh > 0 else 0
     peak_row = main.loc[main["demand_on"].idxmax()] if main["demand_on"].notna().any() else None
 
     n_months = main["month"].nunique()
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c_total, c4, c5 = st.columns(6)
     with c1:
         kpi_card("ค่าไฟรวม (คำนวณ)", f"{total_cost:,.0f} ฿",
                  COLOR_COST, f"{n_months} เดือน · เฉลี่ย {total_cost / max(n_months, 1):,.0f} ฿/เดือน")
@@ -684,6 +758,10 @@ with tab_over:
         kpi_card("Solar ผลิตได้", f"{solar_kwh:,.0f} kWh",
                  COLOR_SOLAR,
                  f"{solar_kwh / total_kwh * 100:.1f}% ของพลังงานทั้งหมด" if total_kwh else "—")
+    with c_total:
+        kpi_card("โรงงานใช้รวมทั้งหมด", f"{total_kwh:,.0f} kWh", "#9333ea",
+                 (f"ซื้อ MEA {grid_kwh / total_kwh * 100:.0f}% + ผลิตเอง "
+                  f"{solar_kwh / total_kwh * 100:.0f}%") if total_kwh else "—")
     with c4:
         kpi_card("ค่าไฟเฉลี่ย", f"{avg_rate:,.2f} ฿/kWh", COLOR_GRID2, "รวม Demand + Ft + VAT")
     with c5:
@@ -692,6 +770,95 @@ with tab_over:
                      COLOR_ALERT, f"เดือน{peak_row['month_name']}")
 
     st.markdown("")
+
+    # --- 1) พยากรณ์ค่าไฟทั้งปี + เทียบงบ ---
+    with st.container(border=True, key="card_forecast"):
+        st.subheader(f"พยากรณ์ค่าไฟทั้งปี {year_be} + เทียบงบ")
+        # สมมติฐาน: เดือนที่เหลือใช้ค่าเฉลี่ย 3 เดือนล่าสุด (หน่วย On/Off-peak + Demand)
+        # คิดด้วยสูตรบิล TOU เดียวกับตัวจริง · Ft ใช้อัตราล่าสุด · ไม่มีค่าปรับ PF/ส่วนลด
+        last3 = main.tail(3)
+        ft_now = float(main["ft_rate"].iloc[-1])
+        fc_rows = []
+        for m in range(int(main["month"].max()) + 1, 13):
+            kwh_on_fc = float(last3["kwh_on"].mean())
+            kwh_off_fc = float(last3["kwh_off"].mean())
+            base = (kwh_on_fc * float(main["rate_on"].iloc[-1])
+                    + kwh_off_fc * float(main["rate_off"].iloc[-1])
+                    + float(last3["demand_on"].mean()) * DEMAND_RATE
+                    + (kwh_on_fc + kwh_off_fc) * ft_now
+                    + float(main["service"].iloc[-1]))
+            fc_rows.append({"month": m, "เดือน": MONTH_LABEL[m],
+                            "total_cost": base * (1 + VAT_RATE), "ชนิด": "พยากรณ์"})
+        year_df = pd.concat([
+            main[["month", "เดือน", "total_cost"]].assign(ชนิด="จริง"),
+            pd.DataFrame(fc_rows),
+        ], ignore_index=True).sort_values("month")
+        year_df["สะสม"] = year_df["total_cost"].cumsum()
+        ytd = float(main["total_cost"].sum())
+        year_total = float(year_df["total_cost"].sum())
+
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            kpi_card("คาดการณ์ทั้งปี", f"{year_total / 1e6:,.2f} ลบ.", "#a78bfa",
+                     f"จริง {len(main)} เดือน + พยากรณ์ {len(fc_rows)} เดือน")
+        with f2:
+            kpi_card("ใช้จริงสะสม (YTD)", f"{ytd / 1e6:,.2f} ลบ.", COLOR_COST,
+                     f"ถึง{main['month_name'].iloc[-1]} · {ytd / year_total * 100:.0f}% ของคาดการณ์ทั้งปี")
+        with f3:
+            if budget_year > 0:
+                diff_pct = (year_total - budget_year) / budget_year * 100
+                kpi_card("เทียบงบทั้งปี", f"{diff_pct:+.1f}%",
+                         COLOR_ALERT if diff_pct > 0 else COLOR_COST,
+                         f"งบ {budget_year / 1e6:,.2f} ลบ. — คาดว่า{'เกิน' if diff_pct > 0 else 'ต่ำกว่า'}งบ "
+                         f"{abs(year_total - budget_year) / 1e6:,.2f} ลบ.")
+            else:
+                kpi_card("เทียบงบทั้งปี", "ยังไม่ตั้งงบ", "#64748b",
+                         "ใส่งบได้ที่แถบซ้าย หัวข้อ 🎯 งบประมาณ")
+
+        st.markdown("")
+        month_order_full = [MONTH_LABEL[m] for m in range(1, 13)]
+        fc_bars = (
+            alt.Chart(year_df)
+            .mark_bar()
+            .encode(
+                x=alt.X("เดือน:N", sort=month_order_full, title="เดือน"),
+                y=alt.Y("total_cost:Q", title="ค่าไฟ (บาท)"),
+                color=alt.Color("ชนิด:N",
+                                scale=alt.Scale(domain=["จริง", "พยากรณ์"],
+                                                range=[COLOR_COST, "#f59e0b"]),
+                                title="ข้อมูล"),
+                opacity=alt.condition(alt.datum.ชนิด == "พยากรณ์",
+                                      alt.value(0.5), alt.value(1)),
+                tooltip=["เดือน", "ชนิด",
+                         alt.Tooltip("total_cost:Q", title="ค่าไฟ (฿)", format=",.0f"),
+                         alt.Tooltip("สะสม:Q", title="สะสมตั้งแต่ต้นปี (฿)", format=",.0f")],
+            )
+        )
+        fc_cum = (
+            alt.Chart(year_df)
+            .mark_line(color="#a78bfa", strokeWidth=2.5,
+                       point=alt.OverlayMarkDef(size=40, color="#a78bfa"))
+            .encode(x=alt.X("เดือน:N", sort=month_order_full),
+                    y=alt.Y("สะสม:Q", title="สะสม (บาท)"),
+                    tooltip=["เดือน", alt.Tooltip("สะสม:Q", title="สะสม (฿)", format=",.0f")])
+        )
+        if budget_year > 0:
+            fc_cum = fc_cum + (
+                alt.Chart(pd.DataFrame({"y": [budget_year]}))
+                .mark_rule(color=COLOR_ALERT, strokeDash=[6, 4], strokeWidth=2)
+                .encode(y="y:Q")
+            )
+        st.altair_chart(
+            alt.layer(fc_bars, fc_cum).resolve_scale(y="independent").properties(height=340),
+            width="stretch",
+        )
+        st.caption(
+            f"แท่งทึบ = บิลจริง · แท่งจาง = พยากรณ์ (เฉลี่ย 3 เดือนล่าสุด, Ft {ft_now:.4f} ฿/kWh, "
+            "ไม่มีค่าปรับ PF) · เส้นม่วง = ยอดสะสม"
+            + (" · เส้นประแดง = งบทั้งปี" if budget_year > 0 else "")
+            + " — ตัวเลขอัปเดตเองทุกครั้งที่มีบิลเดือนใหม่เข้าไฟล์"
+        )
+
     col_l, col_r = st.columns([3, 2])
     with col_l:
         with st.container(border=True, key="card_mix"):
@@ -706,8 +873,10 @@ with tab_over:
                     tooltip=[
                         "เดือน", "แหล่ง",
                         alt.Tooltip("kwh:Q", title="พลังงาน (kWh)", format=",.0f"),
+                        alt.Tooltip("mom:Q", title="▲▼ แหล่งนี้ เทียบเดือนก่อน (%)", format="+.1f"),
                         alt.Tooltip("สัดส่วน:Q", title="สัดส่วนของเดือน (%)", format=".1f"),
                         alt.Tooltip("รวมทั้งเดือน:Q", title="รวมทั้งเดือน (kWh)", format=",.0f"),
+                        alt.Tooltip("mom_total:Q", title="▲▼ รวมทั้งเดือน เทียบเดือนก่อน (%)", format="+.1f"),
                     ],
                 )
                 .properties(height=340)
@@ -741,6 +910,62 @@ with tab_over:
                 .properties(height=340)
             )
             st.altair_chart(chart, width="stretch")
+
+    # --- แนวโน้มค่าไฟเฉลี่ยต่อหน่วย (บาท/Unit) ---
+    with st.container(border=True, key="card_rate"):
+        st.subheader("แนวโน้มค่าไฟเฉลี่ยต่อหน่วย (บาท/Unit)")
+        rate_df = main.dropna(subset=["avg_rate"]).copy()
+        rate_df["mom"] = rate_df["avg_rate"].pct_change() * 100
+        rate_df["ft_change"] = rate_df["ft_rate"].diff().fillna(0) != 0
+        rate_line = (
+            alt.Chart(rate_df)
+            .mark_line(strokeWidth=3, color=COLOR_GRID2)
+            .encode(
+                x=month_axis(),
+                y=alt.Y("avg_rate:Q", title="บาท/Unit",
+                        scale=alt.Scale(zero=False, padding=20)),
+                tooltip=[
+                    "เดือน",
+                    alt.Tooltip("avg_rate:Q", title="บาท/Unit", format=".3f"),
+                    alt.Tooltip("mom:Q", title="เทียบเดือนก่อน (%)", format="+.1f"),
+                    alt.Tooltip("total_cost:Q", title="ค่าไฟ (฿)", format=",.0f"),
+                    alt.Tooltip("kwh:Q", title="หน่วยจาก MEA (kWh)", format=",.0f"),
+                    alt.Tooltip("ft_rate:Q", title="Ft (฿/kWh)", format=".4f"),
+                    alt.Tooltip("load_factor:Q", title="Load Factor (%)", format=".1f"),
+                ],
+            )
+        )
+        # จุดสีส้ม = เดือนที่ กกพ. ปรับค่า Ft (สาเหตุหลักที่ทำให้เส้นกระโดด)
+        rate_pts = (
+            alt.Chart(rate_df)
+            .mark_point(size=90, filled=True)
+            .encode(
+                x=month_axis(),
+                y="avg_rate:Q",
+                color=alt.condition(alt.datum.ft_change,
+                                    alt.value(COLOR_SOLAR), alt.value(COLOR_GRID2)),
+                tooltip=[
+                    "เดือน",
+                    alt.Tooltip("avg_rate:Q", title="บาท/Unit", format=".3f"),
+                    alt.Tooltip("ft_rate:Q", title="Ft (฿/kWh)", format=".4f"),
+                ],
+            )
+        )
+        rate_txt = (
+            alt.Chart(rate_df)
+            .mark_text(dy=-14, color="#e2e8f0", fontWeight="bold")
+            .encode(x=month_axis(), y="avg_rate:Q",
+                    text=alt.Text("avg_rate:Q", format=".2f"))
+        )
+        st.altair_chart((rate_line + rate_pts + rate_txt).properties(height=280),
+                        width="stretch")
+        r_min, r_max = rate_df.loc[rate_df["avg_rate"].idxmin()], rate_df.loc[rate_df["avg_rate"].idxmax()]
+        st.caption(
+            f"บาท/Unit = ค่าไฟทั้งบิล (รวม Demand + Ft + VAT) ÷ หน่วยจาก MEA — "
+            f"ต่ำสุด {r_min['avg_rate']:.3f} ({r_min['เดือน']}) · สูงสุด {r_max['avg_rate']:.3f} ({r_max['เดือน']}) · "
+            f"จุดส้ม = เดือนที่ Ft ปรับ — เส้นนี้ขยับตาม 3 ปัจจัย: ค่า Ft, สัดส่วน On-peak "
+            f"และ Load Factor (เดือนที่หน่วยน้อยแต่ Peak เท่าเดิม ค่าเฉลี่ยต่อหน่วยจะแพงขึ้น)"
+        )
 
     col_l2, col_r2 = st.columns(2)
     with col_l2:
@@ -786,35 +1011,51 @@ with tab_over:
             )
     with col_r2:
         with st.container(border=True, key="card_03"):
-            st.subheader("พลังงานต่อผลผลิต (kWh ต่อชิ้นงานดี)")
+            st.subheader("พลังงานต่อผลผลิต")
             if production is not None and solar is not None:
-                spec = main[["month", "เดือน", "kwh"]].merge(solar, on="month", how="left")
+                spec = main[["month", "เดือน", "kwh", "total_cost"]].merge(
+                    solar, on="month", how="left")
                 spec["solar_kwh"] = spec["solar_kwh"].fillna(0)
                 spec = spec.merge(production, on="month", how="inner")
                 spec["kwh_per_piece"] = (
                     (spec["kwh"] + spec["solar_kwh"]) / spec["good_pieces"]
                 ).where(spec["good_pieces"] > 0)
+                spec["baht_per_piece"] = (
+                    spec["total_cost"] / spec["good_pieces"]
+                ).where(spec["good_pieces"] > 0)
                 spec["รวมพลังงาน"] = spec["kwh"] + spec["solar_kwh"]
-                spec["mom"] = spec["kwh_per_piece"].pct_change() * 100
+
+                unit = st.pills("หน่วย", ["kWh/ชิ้น", "บาท/ชิ้น"], default="kWh/ชิ้น",
+                                label_visibility="collapsed") or "kWh/ชิ้น"
+                ycol, line_color = (("kwh_per_piece", "#9333ea") if unit == "kWh/ชิ้น"
+                                    else ("baht_per_piece", COLOR_COST))
+                plot = spec.dropna(subset=[ycol]).copy()
+                plot["mom"] = plot[ycol].pct_change() * 100
                 chart = (
-                    alt.Chart(spec.dropna(subset=["kwh_per_piece"]))
-                    .mark_line(strokeWidth=3, point=alt.OverlayMarkDef(size=60), color="#9333ea")
+                    alt.Chart(plot)
+                    .mark_line(strokeWidth=3,
+                               point=alt.OverlayMarkDef(size=60, color=line_color),
+                               color=line_color)
                     .encode(
                         x=month_axis(),
-                        y=alt.Y("kwh_per_piece:Q", title="kWh / ชิ้นงานดี"),
+                        y=alt.Y(f"{ycol}:Q", title=f"{unit}งานดี"),
                         tooltip=[
                             "เดือน",
-                            alt.Tooltip("kwh_per_piece:Q", title="kWh/ชิ้น", format=".2f"),
+                            alt.Tooltip(f"{ycol}:Q", title=unit, format=".2f"),
                             alt.Tooltip("mom:Q", title="เทียบเดือนก่อน (%)", format="+.1f"),
                             alt.Tooltip("good_pieces:Q", title="ชิ้นงานดี (ชิ้น)", format=",.0f"),
                             alt.Tooltip("รวมพลังงาน:Q", title="พลังงานรวม (kWh)", format=",.0f"),
-                            alt.Tooltip("solar_kwh:Q", title="จาก Solar (kWh)", format=",.0f"),
+                            alt.Tooltip("total_cost:Q", title="ค่าไฟ (฿)", format=",.0f"),
                         ],
                     )
-                    .properties(height=300)
+                    .properties(height=260)
                 )
                 st.altair_chart(chart, width="stretch")
-                st.caption("ยิ่งต่ำยิ่งดี — ใช้ (ไฟ MEA 33/5 + Solar) ÷ ชิ้นงานดีจากฐาน OEE")
+                st.caption(
+                    "ยิ่งต่ำยิ่งดี — kWh/ชิ้น = (ไฟ MEA + Solar) ÷ ชิ้นงานดี · "
+                    "บาท/ชิ้น = ค่าไฟจริงตามบิล ÷ ชิ้นงานดี (Solar ช่วยกดตัวเลขนี้ลง) — "
+                    "ใช้ตั้งเป้าต้นทุนพลังงานให้ฝ่ายผลิตได้"
+                )
             else:
                 st.info("ต้องอ่านไฟล์ OEE และมิเตอร์ Solar ได้ก่อน จึงจะคำนวณได้")
 
@@ -939,6 +1180,46 @@ with tab_bill:
             )
             st.altair_chart(chart, width="stretch")
             st.caption("kWh ÷ (Demand สูงสุด × ชม.ทั้งเดือน) — ยิ่งสูงยิ่งใช้หม้อแปลงคุ้ม peak ไม่โด่ง")
+
+    with st.container(border=True, key="card_pf"):
+        st.subheader("Power Factor — kVAR เทียบเกณฑ์ (เกินเมื่อไรโดนปรับ)")
+        pf_df = b.dropna(subset=["kvar"]).copy()
+        pf_df = pf_df[pf_df["kvar_limit"] > 0]
+        pf_df["ใช้ไปของเกณฑ์"] = pf_df["kvar"] / pf_df["kvar_limit"] * 100
+        pf_bars = (
+            alt.Chart(pf_df)
+            .mark_bar()
+            .encode(
+                x=month_axis(),
+                y=alt.Y("kvar:Q", title="kVAR"),
+                color=alt.condition(alt.datum.pf_penalty > 0,
+                                    alt.value("#e11d48"), alt.value("#8b5cf6")),
+                tooltip=[
+                    "เดือน",
+                    alt.Tooltip("kvar:Q", title="kVAR", format=",.0f"),
+                    alt.Tooltip("kvar_limit:Q", title="เกณฑ์ (kVAR)", format=",.0f"),
+                    alt.Tooltip("ใช้ไปของเกณฑ์:Q", title="ใช้ไป (% ของเกณฑ์)", format=".0f"),
+                    alt.Tooltip("pf_penalty:Q", title="ค่าปรับ (฿)", format=",.2f"),
+                ],
+            )
+        )
+        pf_limit = (
+            alt.Chart(pf_df)
+            .mark_line(color="#e2e8f0", strokeDash=[6, 4], strokeWidth=2,
+                       point=alt.OverlayMarkDef(size=30, color="#e2e8f0"))
+            .encode(x=month_axis(), y="kvar_limit:Q",
+                    tooltip=["เดือน", alt.Tooltip("kvar_limit:Q", title="เกณฑ์", format=",.0f")])
+        )
+        st.altair_chart((pf_bars + pf_limit).properties(height=300), width="stretch")
+        used = pf_df["ใช้ไปของเกณฑ์"]
+        n_over90 = int((used >= 90).sum())
+        n_penalty = int((pf_df["pf_penalty"] > 0).sum())
+        st.caption(
+            f"แท่งม่วง = kVAR รายเดือน · เส้นประ = เกณฑ์ ({PF_KVAR_FACTOR:.2%} ของ Demand สูงสุด) · "
+            f"แท่งแดง = เดือนที่โดนปรับ — เฉลี่ยใช้ไป {used.mean():.0f}% ของเกณฑ์, "
+            f"แตะ 90%+ ไปแล้ว {n_over90} เดือน, โดนปรับ {n_penalty} ครั้ง — "
+            "แนวโน้มแบบนี้ควรตรวจ capacitor bank ก่อนโดนปรับซ้ำ (ปรับ 56.07 ฿/kVAR ส่วนเกิน)"
+        )
 
     with st.container(border=True, key="card_07"):
         st.subheader("ตารางบิลรายเดือน (คำนวณจากข้อมูลดิบ)")
@@ -1195,6 +1476,8 @@ with tab_sub:
             recon = meters.groupby("month")["kwh"].sum().rename("submeter").reset_index()
             grid_m = pd.concat(bills.values()).groupby("month")["kwh"].sum().rename("grid")
             recon = recon.merge(grid_m, on="month", how="outer")
+            # เทียบได้เฉพาะเดือนที่บิลมาแล้ว — เดือนที่มิเตอร์ภายในมาก่อนบิลให้ข้ามไป
+            recon = recon[recon["month"].isin(bill_months)]
             if solar is not None:
                 recon = recon.merge(solar, on="month", how="left")
             recon["solar_kwh"] = recon.get("solar_kwh", pd.Series(dtype=float)).fillna(0)
@@ -1266,14 +1549,17 @@ with tab_solar:
         c1, c2, c3 = st.columns(3)
         with c1:
             kpi_card("Solar ผลิตรวม", f"{solar_total:,.0f} kWh", COLOR_SOLAR,
-                     f"เฉลี่ย {solar_total / max(solar['month'].nunique(), 1):,.0f} kWh/เดือน")
+                     f"{solar['month'].nunique()} เดือน · เฉลี่ย "
+                     f"{solar_total / max(solar['month'].nunique(), 1):,.0f} kWh/เดือน")
         with c2:
-            share = solar_total / (solar_total + main["kwh"].sum()) * 100
+            # เทียบเฉพาะเดือนที่มีบิลคู่กัน — เดือนที่ Solar มาก่อนบิลยังไม่นับ
+            solar_aligned = float(solar.loc[solar["month"].isin(bill_months), "solar_kwh"].sum())
+            share = solar_aligned / (solar_aligned + main["kwh"].sum()) * 100
             kpi_card("สัดส่วนช่วยโรงงาน", f"{share:.1f}%", COLOR_SOLAR,
-                     "ของพลังงานโรงงาน (33/5 + Solar)")
+                     f"ของพลังงานโรงงาน (เทียบ {len(bill_months)} เดือนที่มีบิลแล้ว)")
         with c3:
             kpi_card("ประหยัดค่าไฟ (ประมาณ)", f"{saving:,.0f} ฿", COLOR_COST,
-                     "คิดที่อัตรา On-peak + Ft")
+                     f"คิดที่อัตรา On-peak + Ft ({len(bill_months)} เดือนที่มีบิล)")
 
         st.markdown("")
         col_l, col_r = st.columns(2)
@@ -1326,6 +1612,216 @@ with tab_solar:
             "⚠️ มูลค่าที่ประหยัดเป็นการประมาณ — สมมุติว่าไฟ Solar ทั้งหมดถูกใช้ทดแทนหน่วย On-peak "
             "(โซลาร์ผลิตกลางวันตรงกับช่วง On-peak จันทร์–ศุกร์) และยังไม่รวมผลลด Demand"
         )
+
+        st.markdown("")
+        # --- คาร์บอนฟุตพรินต์จากไฟฟ้า (Scope 2 ประมาณการ) ---
+        with st.container(border=True, key="card_co2"):
+            st.subheader("🌍 คาร์บอนฟุตพรินต์จากไฟฟ้า (Scope 2 — ประมาณการ)")
+            co2 = main[["month", "เดือน", "kwh"]].merge(solar, on="month", how="left")
+            co2["solar_kwh"] = co2["solar_kwh"].fillna(0)
+            co2["ปล่อยจริง (MEA)"] = co2["kwh"] * GRID_EF / 1000
+            co2["เลี่ยงได้ (Solar)"] = co2["solar_kwh"] * GRID_EF / 1000
+            grid_t = float(co2["ปล่อยจริง (MEA)"].sum())
+            avoid_t = float(co2["เลี่ยงได้ (Solar)"].sum())
+
+            g1, g2, g3 = st.columns(3)
+            with g1:
+                kpi_card("ปล่อยจากไฟ MEA", f"{grid_t:,.0f} ตัน CO₂e", "#94a3b8",
+                         f"{co2['month'].nunique()} เดือน · EF {GRID_EF} kg/kWh")
+            with g2:
+                kpi_card("Solar ช่วยเลี่ยง", f"{avoid_t:,.0f} ตัน CO₂e", COLOR_SOLAR,
+                         f"ลดการปล่อยลง {avoid_t / (grid_t + avoid_t) * 100:.0f}% เทียบกับไม่มี Solar")
+            with g3:
+                kpi_card("เทียบเท่าปลูกต้นไม้", f"{avoid_t * 1000 / TREE_ABSORB:,.0f} ต้น",
+                         COLOR_COST, f"ที่อัตราดูดซับ ~{TREE_ABSORB} kg CO₂/ต้น/ปี")
+
+            st.markdown("")
+            co2_long = co2.melt(id_vars="เดือน",
+                                value_vars=["ปล่อยจริง (MEA)", "เลี่ยงได้ (Solar)"],
+                                var_name="ชนิด", value_name="ตัน")
+            chart = (
+                alt.Chart(co2_long)
+                .mark_bar()
+                .encode(
+                    x=month_axis(),
+                    y=alt.Y("ตัน:Q", title="ตัน CO₂e"),
+                    color=alt.Color("ชนิด:N",
+                                    scale=alt.Scale(domain=["ปล่อยจริง (MEA)", "เลี่ยงได้ (Solar)"],
+                                                    range=["#94a3b8", COLOR_SOLAR])),
+                    tooltip=["เดือน", "ชนิด", alt.Tooltip("ตัน:Q", format=",.1f")],
+                )
+                .properties(height=260)
+            )
+            st.altair_chart(chart, width="stretch")
+            st.caption(
+                f"คำนวณด้วย Grid Emission Factor ไทย {GRID_EF} kgCO₂e/kWh (อบก./TGO) — "
+                "เป็นตัวเลขประมาณการสำหรับรายงานภายใน/ESG เบื้องต้น ไม่ใช่ค่าที่ทวนสอบรับรองแล้ว"
+            )
+
+# --- 4.5) Simulate Demand — วิเคราะห์ + จำลองมาตรการลดค่าไฟ ---
+with tab_sim:
+    st.caption(
+        "จำลองมาตรการลดค่าไฟด้วยสูตรบิล TOU ชุดเดียวกับบิลจริง — "
+        "เลื่อนตัวเลขดูผลก่อนลงมือทำจริง"
+    )
+
+    # ---- A) วิเคราะห์ Demand ของเดือนที่เลือก (ตามแนววิเคราะห์ AVG vs Peak) ----
+    sel_month = st.selectbox("เดือนฐานสำหรับวิเคราะห์/จำลอง",
+                             main["month_name"].tolist(),
+                             index=len(main) - 1)
+    r = main[main["month_name"] == sel_month].iloc[0]
+    hours = calendar.monthrange(year_be - 543, int(r["month"]))[1] * 24
+    avg_kw = r["kwh"] / hours                      # ถ้าเกลี่ยโหลดเรียบสนิท ต้องการแค่เท่านี้
+    peak_kw = float(r["demand_on"])                # ตัวที่ MEA คิดเงิน
+    ratio = peak_kw / avg_kw if avg_kw > 0 else 0
+
+    with st.container(border=True, key="card_sim_now"):
+        st.subheader(f"เดือน{sel_month} — โรงงานกระชากไฟแค่ไหน")
+        s1, s2, s3, s4, s5 = st.columns(5)
+        with s1:
+            kpi_card("หน่วยที่ใช้", f"{r['kwh']:,.0f} kWh", COLOR_GRID,
+                     f"{hours:,} ชั่วโมงในเดือน")
+        with s2:
+            kpi_card("AVG Demand", f"{avg_kw:,.0f} kW", COLOR_GRID2,
+                     "ค่าเฉลี่ยถ้าเกลี่ยโหลดเรียบ = kWh ÷ ชม.")
+        with s3:
+            kpi_card("Peak Demand", f"{peak_kw:,.0f} kW", COLOR_ALERT,
+                     f"จ่ายค่า Demand {peak_kw * DEMAND_RATE:,.0f} ฿")
+        with s4:
+            kpi_card("Peak กี่เท่าของเฉลี่ย", f"{ratio:.1f} เท่า",
+                     COLOR_ALERT if ratio > 3 else COLOR_COST,
+                     "โรงงานเกลี่ยโหลดดีมักอยู่ 2–3 เท่า")
+        with s5:
+            kpi_card("Load Factor", f"{r['load_factor']:.0f}%",
+                     COLOR_ALERT if r["load_factor"] < 30 else COLOR_COST,
+                     "ยิ่งสูง = ใช้กำลังไฟที่จ่ายเงินซื้อคุ้มขึ้น")
+        if ratio > 3:
+            st.warning(
+                f"Peak สูงถึง **{ratio:.1f} เท่า** ของการใช้เฉลี่ย — เป็นสัญญาณว่ามีช่วงที่ "
+                "เครื่องจักรหลายตัวเดินพร้อมกัน (โดยเฉพาะช่วงสตาร์ทเช้า) "
+                "การเหลื่อมเวลาสตาร์ทเครื่องใหญ่ทีละตัวช่วยกด Peak ได้โดยไม่กระทบยอดผลิต"
+            )
+
+        # กราฟ AVG vs Peak ทุกเดือน — เห็นช่องว่าง (ส่วนที่กระชาก) ตลอดครึ่งปี
+        gap = main.copy()
+        gap["hours"] = gap["month"].map(
+            lambda m: calendar.monthrange(year_be - 543, int(m))[1] * 24)
+        gap["AVG Demand"] = gap["kwh"] / gap["hours"]
+        gap["เท่า"] = gap["demand_on"] / gap["AVG Demand"]
+        gap_long = gap.melt(id_vars=["เดือน", "เท่า"],
+                            value_vars=["AVG Demand", "demand_on"],
+                            var_name="ชนิด", value_name="kW").replace(
+            {"demand_on": "Peak Demand"})
+        bars_gap = (
+            alt.Chart(gap_long)
+            .mark_bar()
+            .encode(
+                x=month_axis(), xOffset="ชนิด:N",
+                y=alt.Y("kW:Q", title="kW"),
+                color=alt.Color("ชนิด:N",
+                                scale=alt.Scale(domain=["AVG Demand", "Peak Demand"],
+                                                range=[COLOR_GRID2, COLOR_ALERT])),
+                tooltip=["เดือน", "ชนิด", alt.Tooltip("kW:Q", format=",.0f"),
+                         alt.Tooltip("เท่า:Q", title="Peak/AVG (เท่า)", format=".1f")],
+            )
+        )
+        txt_gap = (
+            alt.Chart(gap)
+            .mark_text(dy=-8, color="#e2e8f0", fontWeight="bold")
+            .encode(x=month_axis(), y=alt.Y("demand_on:Q"),
+                    text=alt.Text("เท่า:Q", format=".1f"))
+        )
+        st.altair_chart((bars_gap + txt_gap).properties(height=300), width="stretch")
+        st.caption("ตัวเลขบนแท่งแดง = Peak เป็นกี่เท่าของค่าเฉลี่ย — ยิ่งใกล้ 1 ยิ่งเกลี่ยโหลดดี")
+
+    # ---- B) จำลองมาตรการ ----
+    with st.container(border=True, key="card_sim_input"):
+        st.subheader("🎛️ ปรับมาตรการ แล้วดูบิลใหม่ทันที")
+        c_in1, c_in2 = st.columns(2)
+        with c_in1:
+            target_peak = st.slider(
+                "① กด Peak Demand ลงเหลือ (kW)",
+                min_value=int(avg_kw) + 1, max_value=int(peak_kw),
+                value=int(peak_kw), step=5,
+                help="เหลื่อมเวลาสตาร์ทเครื่องใหญ่ / เลี่ยงเดินเครื่องหนักพร้อมกันช่วง On-peak",
+            )
+        with c_in2:
+            shift_pct = st.slider(
+                "② ย้ายหน่วย On-peak → Off-peak (%)", 0, 30, 0, step=1,
+                help="ย้ายงานไปกะดึก/เสาร์-อาทิตย์ เช่น งานอัด งานบด ที่ไม่ต้องรอของ",
+            )
+
+        # บิลเดิม (คำนวณใหม่แบบไม่รวมส่วนลด เพื่อเทียบแบบแฟร์ๆ)
+        pf_pen = float(r["pf_penalty"])
+        old_base = (r["kwh_on"] * r["rate_on"] + r["kwh_off"] * r["rate_off"]
+                    + peak_kw * DEMAND_RATE + r["kwh"] * r["ft_rate"]
+                    + pf_pen + r["service"])
+        old_total = old_base * (1 + VAT_RATE)
+
+        # บิลจำลอง
+        moved = r["kwh_on"] * shift_pct / 100
+        new_on, new_off = r["kwh_on"] - moved, r["kwh_off"] + moved
+        new_base = (new_on * r["rate_on"] + new_off * r["rate_off"]
+                    + target_peak * DEMAND_RATE + r["kwh"] * r["ft_rate"]
+                    + pf_pen + r["service"])
+        new_total = new_base * (1 + VAT_RATE)
+        save_m = old_total - new_total
+        new_lf = r["kwh"] / (max(target_peak, float(r["demand_off"])) * hours) * 100
+
+        b1, b2, b3, b4 = st.columns(4)
+        with b1:
+            kpi_card("บิลเดิม", f"{old_total:,.0f} ฿", "#94a3b8", f"เดือน{sel_month}")
+        with b2:
+            kpi_card("บิลจำลอง", f"{new_total:,.0f} ฿", COLOR_GRID,
+                     f"Peak {target_peak:,} kW · ย้าย {shift_pct}%")
+        with b3:
+            kpi_card("ประหยัด/เดือน", f"{save_m:,.0f} ฿",
+                     COLOR_COST if save_m > 0 else "#94a3b8",
+                     f"{save_m / old_total * 100:.1f}% ของบิล" if old_total else "")
+        with b4:
+            kpi_card("ประหยัด/ปี", f"{save_m * 12:,.0f} ฿", COLOR_COST,
+                     f"Load Factor ใหม่ ≈ {new_lf:.0f}%")
+
+        st.markdown("")
+        comp_sim = pd.DataFrame([
+            {"องค์ประกอบ": "ค่าพลังงาน On-peak", "ฉาก": "เดิม", "บาท": r["kwh_on"] * r["rate_on"]},
+            {"องค์ประกอบ": "ค่าพลังงาน On-peak", "ฉาก": "จำลอง", "บาท": new_on * r["rate_on"]},
+            {"องค์ประกอบ": "ค่าพลังงาน Off-peak", "ฉาก": "เดิม", "บาท": r["kwh_off"] * r["rate_off"]},
+            {"องค์ประกอบ": "ค่าพลังงาน Off-peak", "ฉาก": "จำลอง", "บาท": new_off * r["rate_off"]},
+            {"องค์ประกอบ": "ค่า Demand", "ฉาก": "เดิม", "บาท": peak_kw * DEMAND_RATE},
+            {"องค์ประกอบ": "ค่า Demand", "ฉาก": "จำลอง", "บาท": target_peak * DEMAND_RATE},
+            {"องค์ประกอบ": "ค่า Ft", "ฉาก": "เดิม", "บาท": r["kwh"] * r["ft_rate"]},
+            {"องค์ประกอบ": "ค่า Ft", "ฉาก": "จำลอง", "บาท": r["kwh"] * r["ft_rate"]},
+            {"องค์ประกอบ": "VAT 7%", "ฉาก": "เดิม", "บาท": old_base * VAT_RATE},
+            {"องค์ประกอบ": "VAT 7%", "ฉาก": "จำลอง", "บาท": new_base * VAT_RATE},
+        ])
+        chart_sim = (
+            alt.Chart(comp_sim)
+            .mark_bar()
+            .encode(
+                x=alt.X("องค์ประกอบ:N", title=None, axis=alt.Axis(labelAngle=-20),
+                        sort=list(dict.fromkeys(comp_sim["องค์ประกอบ"]))),
+                xOffset=alt.XOffset("ฉาก:N", sort=["เดิม", "จำลอง"]),
+                y=alt.Y("บาท:Q", title="บาท"),
+                color=alt.Color("ฉาก:N",
+                                scale=alt.Scale(domain=["เดิม", "จำลอง"],
+                                                range=["#94a3b8", COLOR_COST])),
+                tooltip=["องค์ประกอบ", "ฉาก", alt.Tooltip("บาท:Q", format=",.0f")],
+            )
+            .properties(height=300)
+        )
+        st.altair_chart(chart_sim, width="stretch")
+        st.caption(
+            f"เกร็ดไว้ต่อรองในโรงงาน: ทุก 10 kW ที่กด Peak ลง = {10 * DEMAND_RATE * 1.07:,.0f} ฿/เดือน "
+            f"≈ {10 * DEMAND_RATE * 12 * 1.07:,.0f} ฿/ปี · ทุก 1% ของหน่วย On-peak ที่ย้ายไป Off-peak "
+            f"= {r['kwh_on'] * 0.01 * (r['rate_on'] - r['rate_off']) * 1.07:,.0f} ฿/เดือน (รวม VAT แล้ว)"
+        )
+
+    st.info(
+        "⚠️ ข้อจำกัด: ข้อมูลที่มีเป็นรายเดือน จึงบอกไม่ได้ว่า Peak เกิดวันไหน กี่โมง เครื่องไหนทำ — "
+        "การจำลองนี้ตอบ 'ถ้ากดลงได้จะคุ้มเท่าไร' แต่จะรู้ว่า 'กดตรงไหน' ต้องขอ Load Profile "
+        "ราย 15 นาทีจาก MEA (มิเตอร์ TOU บันทึกอยู่แล้ว ขอย้อนหลังได้) หรือติด CT logger ที่ตู้ MDB"
+    )
 
 # --- 5) แจ้งเตือน ---
 with tab_alert:
@@ -1419,6 +1915,8 @@ with tab_alert:
         sol_m = (solar.set_index("month")["solar_kwh"] if solar is not None
                  else pd.Series(dtype=float))
         for m, g in meters.groupby("month"):
+            if m not in bill_months:      # เดือนที่บิลยังไม่มา เทียบไม่ได้ ข้ามไป
+                continue
             supply = grid_m.get(m, 0) + sol_m.get(m, 0)
             if supply <= 0:
                 continue

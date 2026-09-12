@@ -8,6 +8,10 @@ env/
 # Streamlit
 .streamlit/secrets.toml
 
+# Power BI Academy / Python Academy — ความก้าวหน้าของผู้เรียนแต่ละคน (ข้อมูลส่วนตัว ไม่ต้องเข้า git)
+pbi_progress/
+py_progress/
+
 # OS
 Thumbs.db
 .DS_Store

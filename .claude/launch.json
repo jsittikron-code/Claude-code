@@ -2,15 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "tou",
-      "url": "http://localhost:8502",
-      "port": 8502
-    },
-    {
-      "name": "monitor",
+      "name": "overview",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "streamlit", "run", "monitor.py", "--server.headless", "true", "--server.port", "8512"],
-      "port": 8512
+      "runtimeArgs": ["-m", "streamlit", "run", "overview_dashboard.py", "--server.headless", "true", "--server.port", "8507"],
+      "port": 8507
     },
     {
       "name": "workcenter",
@@ -25,11 +20,38 @@
       "port": 8505
     },
     {
+      "name": "oee",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "oee_manager.py", "--server.headless", "true", "--server.port", "8506"],
+      "port": 8506
+    },
+    {
       "name": "energy",
-      "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "python -m streamlit run energy_monitor.py --server.headless true --server.port %PORT%"],
-      "port": 8514,
-      "autoPort": true
+      "url": "http://localhost:8504",
+      "port": 8504
+    },
+    {
+      "name": "energy-dev",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "energy_monitor.py", "--server.headless", "true", "--server.port", "8514"],
+      "port": 8514
+    },
+    {
+      "name": "powerbi",
+      "url": "http://localhost:8508",
+      "port": 8508
+    },
+    {
+      "name": "production",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "production_dashboard.py", "--server.headless", "true", "--server.port", "8510"],
+      "port": 8510
+    },
+    {
+      "name": "maintenance-eng",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "maintenance_eng_dashboard.py", "--server.headless", "true", "--server.port", "8511"],
+      "port": 8511
     }
   ]
 }

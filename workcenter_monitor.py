@@ -61,6 +61,26 @@ OEE_PATH = (
     r"\ฝ่ายซ่อมบำรุงรักษา\3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx"
 )
 
+# ทะเบียนเครื่องจักร — ชื่อรุ่น วันติดตั้ง อายุ สถานที่ รอบ PM สถานะ
+REGISTRY_PATH = (
+    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
+    r"\ฝ่ายซ่อมบำรุงรักษา\5.งานทะเบียนเครื่องจักร\ทะเบียนเครื่องจักร_DataMaster_2569.xlsx"
+)
+# ใบงานซ่อมย้อนหลัง 2020-2026 — ค่าใช้จ่าย PM/BM Electric/Mechanical Module
+REPAIR_PATH = (
+    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
+    r"\ฝ่ายซ่อมบำรุงรักษา\ทดสอบแยกข้อมูลย้อนหลัง\รายงานซ่อมบำรุง_เครื่อง_2020-2026.xlsx"
+)
+
+# ชั่วโมงงานมาตรฐานต่อวัน ใช้เป็นตัวหารของ % เดินเครื่อง (กะเดียว 07:00-16:00)
+PLAN_MINUTES_PER_DAY = 480
+
+# จานสีสำหรับกราฟโมดูลเครื่องจักร (ชุด colorblind-safe เดียวกับกราฟอื่น)
+MODULE_COLORS = [
+    "#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+    "#e87ba4", "#4a3aa7", "#008b8b", "#d03b3b",
+]
+
 # ชีตเหตุการณ์หยุดเครื่องในฐาน MTBF-MTTR → ประเภทเหตุการณ์
 MTBF_SHEETS = {
     "Breakdown_B000000001": "Breakdown",
@@ -105,29 +125,37 @@ STATUS_COLORS = {
 # ป้ายเหตุการณ์ซ่อม ตามรหัส Job ในฐาน MTBF-MTTR:
 #   B000000001  = ผู้คุมเครื่องแจ้งเครื่องเสีย → ช่วงรอช่างเข้ามา
 #   BP00000001  = ช่างเข้าซ่อมจริง
-LABEL_B = "🔴 แจ้งซ่อม-รอช่าง (B)"
-LABEL_BP = "🔧 ช่างเข้าซ่อม (BP)"
+LABEL_B = "แจ้งซ่อม-รอช่าง (B)"
+LABEL_BP = "ช่างเข้าซ่อม (BP)"
 
-# สีงานปกติ + สาเหตุหยุดเครื่องบน Timeline (palette colorblind-safe ชุดเดียวกับ monitor.py)
-COLOR_WORK = "#2a78d6"
+# มาตรฐานสีของฝ่าย:
+#   ทำงานปกติ (PROD) = เขียว · งาน P (หยุดตามแผน) = โทนเหลือง
+#   แจ้งซ่อม B = แดงอ่อน · ช่างซ่อม BP = แดงเข้ม
+COLOR_WORK = "#21a559"    # เขียว — ทำงานปกติ
+COLOR_P = "#f2b705"       # เหลือง — งาน P
+COLOR_B = "#f07575"       # แดงอ่อน — แจ้งซ่อม B
+COLOR_BP = "#b31217"      # แดงเข้ม — ช่างซ่อม BP
+
 REASON_COLORS = {
     "ทำงานปกติ": COLOR_WORK,
-    LABEL_B: "#d03b3b",
-    LABEL_BP: "#7a5bd6",
-    "เครื่องชำรุด": "#e34948",
-    "อุปกรณ์เครื่องจักรชำรุด": "#d03b3b",
-    "ทำ PM Check/ทำความสะอาด": "#1baf7a",
-    "เปลี่ยน tooling": "#eb6834",
-    "เตรียมวัตถุดิบ": "#eda100",
-    "รองาน": "#e87ba4",
-    "หยุดตามเวลาพัก": "#7f9db9",
-    "แก้ไขงานไม่ผ่าน": "#c2185b",
+    LABEL_B: COLOR_B,
+    LABEL_BP: COLOR_BP,
+    # สาเหตุฝั่งแจ้งซ่อม (B) — โทนแดงอ่อน
+    "เครื่องชำรุด": "#f07575",
+    "อุปกรณ์เครื่องจักรชำรุด": "#e35d5d",
+    # สาเหตุฝั่งงาน P — โทนเหลือง/ทอง ไล่เฉดให้พอแยกกันได้
+    "เปลี่ยน tooling": "#f2b705",
+    "ทำ PM Check/ทำความสะอาด": "#ffd23c",
+    "เตรียมวัตถุดิบ": "#d9a404",
+    "รองาน": "#f7e08a",
+    "หยุดตามเวลาพัก": "#c9b458",
+    "แก้ไขงานไม่ผ่าน": "#e0851f",
     "วัตถุดิบมีปัญหา": "#a0722e",
-    "ประชุมชี้แจงภาระงาน": "#008b8b",
-    "เครื่องจักรหยุด": "#b03060",
-    "ปรับเครื่องจักร": "#e29b3d",
-    "ปรับโปรแกรม": "#4a3aa7",
-    "อุปกรณ์อื่นๆ ชำรุด (เครื่องจักรทำงานได้)": "#e8837a",
+    "ประชุมชี้แจงภาระงาน": "#bfa100",
+    "เครื่องจักรหยุด": "#8f7a1e",
+    "ปรับเครื่องจักร": "#e8c547",
+    "ปรับโปรแกรม": "#cdaa4e",
+    "อุปกรณ์อื่นๆ ชำรุด (เครื่องจักรทำงานได้)": "#e59d3c",
     "(ไม่ระบุ)": "#898781",
     "อื่น ๆ": "#52514e",
 }
@@ -136,12 +164,20 @@ REASON_COLORS = {
 # ---------------------------------------------------------------------------
 # โหลดและเตรียมข้อมูล
 # ---------------------------------------------------------------------------
+# เวอร์ชันของตรรกะเตรียมข้อมูล — ขยับเลขนี้ทุกครั้งที่แก้ป้าย/สี/คอลัมน์ที่คำนวณไว้
+# เพื่อให้ cache เก่าถูกทิ้งเอง (st.cache_data ไม่รู้จักการเปลี่ยนค่าคงที่ภายนอกฟังก์ชัน)
+DATA_LOGIC_VERSION = "2026-08-04.1-std-colors"
+
+
 def folder_signature() -> tuple:
     """ลายเซ็นแหล่งข้อมูล = (ชื่อไฟล์, เวลาแก้ไข) ของไฟล์ raw ทุกไฟล์ + ฐาน MTBF/OEE
     — ไฟล์ไหนถูก sync/อัปเดต ลายเซ็นเปลี่ยน แอปจะโหลดใหม่และรีเฟรชเอง"""
     files = sorted(glob.glob(os.path.join(DATA_DIR, FILE_PATTERN)))
-    files += [p for p in (MASTER_PATH, MTBF_PATH, OEE_PATH) if os.path.exists(p)]
-    return tuple((os.path.basename(p), os.path.getmtime(p)) for p in files)
+    files += [p for p in (MASTER_PATH, MTBF_PATH, OEE_PATH, REGISTRY_PATH, REPAIR_PATH)
+              if os.path.exists(p)]
+    return (("logic", DATA_LOGIC_VERSION),) + tuple(
+        (os.path.basename(p), os.path.getmtime(p)) for p in files
+    )
 
 
 def _finish(df: pd.DataFrame) -> pd.DataFrame:
@@ -317,20 +353,199 @@ def load_mtbf(sig: tuple) -> tuple[dict, pd.DataFrame]:
 
 @st.cache_data(show_spinner="กำลังอ่านฐานข้อมูล OEE (เวลาทำงานจริง)...", ttl="2h")
 def load_oee_runtime(sig: tuple) -> pd.DataFrame:
-    """เวลาทำงานจริง/วัน รายเครื่องจากฐาน OEE — ตัวหารของสูตร MTBF มาตรฐานฝ่าย"""
+    """เวลาทำงานจริง/วัน รายเครื่องจากฐาน OEE — ตัวหารของสูตร MTBF มาตรฐานฝ่าย
+
+    ห้ามกลืน exception ในฟังก์ชันที่ถูก cache — ถ้าอ่านพลาดชั่วคราว (ไฟล์ถูกล็อก
+    ระหว่าง OneDrive sync) แล้วคืนค่าว่าง ค่าว่างจะถูก cache ค้างจน TTL หมด
+    ให้โยน error ออกไปแทน จุดเรียกจะจัดการเป็นค่าว่างเฉพาะรอบนั้นและลองใหม่เอง
+    """
     if not os.path.exists(OEE_PATH):
         return pd.DataFrame()
-    try:
-        df = pd.read_excel(OEE_PATH, sheet_name="Report1",
-                           usecols=["MC", "Trans_date", "เวลาทำงานจริง/วัน"])
-    except Exception:
-        return pd.DataFrame()
+    df = pd.read_excel(OEE_PATH, sheet_name="Report1",
+                       usecols=["MC", "Trans_date", "เวลาทำงานจริง/วัน"])
     df["Trans_date"] = pd.to_datetime(df["Trans_date"], errors="coerce")
     df = df.dropna(subset=["Trans_date"])
     df["MC"] = df["MC"].astype(str).str.strip()
     df["เวลาทำงานจริง/วัน"] = pd.to_numeric(df["เวลาทำงานจริง/วัน"], errors="coerce").fillna(0)
     df["Date"] = df["Trans_date"].dt.date
     return df
+
+
+@st.cache_data(show_spinner="กำลังอ่านทะเบียนเครื่องจักร...", ttl="2h")
+def load_registry(sig: tuple) -> pd.DataFrame:
+    """ทะเบียนเครื่องจักร (ชีต 'ทะเบียนหลัก' หัวตารางอยู่แถวที่ 3) → index = รหัสเครื่อง
+
+    ห้ามกลืน exception ในฟังก์ชันที่ถูก cache (ดูเหตุผลที่ load_oee_runtime) —
+    เคยเกิดเหตุไฟล์ถูกล็อกระหว่าง sync แล้วค่าว่างถูก cache ค้าง ทำให้ทุกเครื่อง
+    ขึ้น "ไม่มีในทะเบียน" ทั้งที่ไฟล์ปกติ
+    """
+    if not os.path.exists(REGISTRY_PATH):
+        return pd.DataFrame()
+    df = pd.read_excel(REGISTRY_PATH, sheet_name="ทะเบียนหลัก", header=2,
+                       engine="calamine")
+    if "รหัสเครื่อง" not in df.columns:
+        raise ValueError("ทะเบียนเครื่องจักร: ไม่พบคอลัมน์ 'รหัสเครื่อง' "
+                         "(โครงชีต 'ทะเบียนหลัก' อาจถูกแก้)")
+    df = df[df["รหัสเครื่อง"].notna()].copy()
+    df["รหัสเครื่อง"] = df["รหัสเครื่อง"].astype(str).str.strip()
+    df["วันที่ติดตั้ง"] = pd.to_datetime(df["วันที่ติดตั้ง"], errors="coerce")
+    df["อายุ (ปี)"] = pd.to_numeric(df["อายุ (ปี)"], errors="coerce")
+    # คอลัมน์อายุในไฟล์อาจว่าง (เช่นสูตรถูกล้างตอนแก้ไฟล์) —
+    # ถ้ามีวันที่ติดตั้ง ให้คำนวณอายุเองเสมอ ไม่พึ่งค่าในไฟล์อย่างเดียว
+    need = df["อายุ (ปี)"].isna() & df["วันที่ติดตั้ง"].notna()
+    df.loc[need, "อายุ (ปี)"] = (
+        (pd.Timestamp.now() - df.loc[need, "วันที่ติดตั้ง"]).dt.days / 365.25
+    ).round(1)
+    return df.drop_duplicates(subset="รหัสเครื่อง").set_index("รหัสเครื่อง")
+
+
+@st.cache_data(show_spinner="กำลังอ่านใบงานซ่อม 2020-2026...", ttl="2h")
+def load_repair(sig: tuple) -> pd.DataFrame:
+    """ใบงานซ่อมย้อนหลังรายเครื่อง — ค่าใช้จ่าย เวลาซ่อม PM/BM Electric/Mechanical Module
+
+    ห้ามกลืน exception ในฟังก์ชันที่ถูก cache (ดูเหตุผลที่ load_oee_runtime)
+    """
+    if not os.path.exists(REPAIR_PATH):
+        return pd.DataFrame()
+    df = pd.read_excel(REPAIR_PATH, sheet_name="ข้อมูล", engine="calamine")
+    if "รหัสเครื่อง" not in df.columns:
+        raise ValueError("ใบงานซ่อม: ไม่พบคอลัมน์ 'รหัสเครื่อง' "
+                         "(โครงชีต 'ข้อมูล' อาจถูกแก้)")
+    df = df[df["รหัสเครื่อง"].notna()].copy()
+    df["รหัสเครื่อง"] = df["รหัสเครื่อง"].astype(str).str.strip()
+    df["วันที่แจ้งซ่อม"] = pd.to_datetime(df["วันที่แจ้งซ่อม"], errors="coerce")
+    for c in ("ค่าใช้จ่าย (บาท)", "Petty Cash (บาท)", "เวลาซ่อม (นาที)", "ปี"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    df["ค่าใช้จ่ายรวม"] = (df.get("ค่าใช้จ่าย (บาท)", 0)
+                          + df.get("Petty Cash (บาท)", 0))
+    for c in ("สถานะการซ่อม (PM/BM)", "ประเภทงาน", "Module", "ชื่อโมดูล"):
+        if c in df.columns:
+            df[c] = df[c].astype("string").fillna("ไม่ระบุ").str.strip()
+    return df
+
+
+# ---------------------------------------------------------------------------
+# จับคู่เหตุการณ์ซ่อม B → BP และคิดเวลาหยุดเครื่องต่อครั้ง
+# ---------------------------------------------------------------------------
+PAIR_WINDOW_HOURS = 8   # BP ต้องเริ่มภายในกี่ชั่วโมงหลังใบแจ้ง B ปิด จึงถือว่าเป็นคู่กัน
+
+
+def pair_repairs(b_df: pd.DataFrame, bp_df: pd.DataFrame) -> pd.DataFrame:
+    """จับคู่ใบแจ้งซ่อม (B) กับงานช่าง (BP) ของเครื่องเดียวกัน
+
+    คืน 1 แถวต่อ 1 เหตุการณ์เสีย พร้อมเวลา 3 ช่วง:
+      รอช่าง    = B เริ่ม → BP เริ่ม
+      ช่างซ่อม   = ระยะเวลางาน BP
+      หยุดรวม   = B เริ่ม → BP จบ   ← ตัวตั้งของ MTTR (เวลาที่เครื่องหยุดผลิตจริง)
+
+    ถ้าหาคู่ BP ไม่เจอ ใช้ระยะเวลาของใบแจ้ง B เป็นเวลาหยุดแทน
+    (ประเมินต่ำกว่าความจริง แต่ดีกว่าทิ้งเหตุการณ์นั้นไป)
+    """
+    cols = ["Machine", "b_start", "b_end", "bp_start", "bp_end",
+            "wait_min", "repair_min", "downtime_min", "matched", "Reason"]
+    if b_df.empty:
+        return pd.DataFrame(columns=cols)
+
+    pool = bp_df.sort_values("Start") if not bp_df.empty else bp_df
+    used, rows = set(), []
+    for _, b in b_df.sort_values("Start").iterrows():
+        cand = pool[
+            (pool["Machine"] == b["Machine"])
+            & (pool["Start"] >= b["Start"])
+            & (pool["Start"] <= b["End"] + pd.Timedelta(hours=PAIR_WINDOW_HOURS))
+            & (~pool.index.isin(used))
+        ] if not pool.empty else pool
+        if len(cand):
+            bp = cand.iloc[0]
+            used.add(cand.index[0])
+            rows.append({
+                "Machine": b["Machine"], "b_start": b["Start"], "b_end": b["End"],
+                "bp_start": bp["Start"], "bp_end": bp["End"],
+                "wait_min": (bp["Start"] - b["Start"]).total_seconds() / 60,
+                "repair_min": (bp["End"] - bp["Start"]).total_seconds() / 60,
+                "downtime_min": (bp["End"] - b["Start"]).total_seconds() / 60,
+                "matched": True, "Reason": b.get("Reason"),
+            })
+        else:
+            rows.append({
+                "Machine": b["Machine"], "b_start": b["Start"], "b_end": b["End"],
+                "bp_start": pd.NaT, "bp_end": pd.NaT,
+                "wait_min": None, "repair_min": None,
+                "downtime_min": (b["End"] - b["Start"]).total_seconds() / 60,
+                "matched": False, "Reason": b.get("Reason"),
+            })
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, ttl="2h")
+def machine_runtime_profile(sig: tuple, mc: str) -> dict:
+    """สรุปเวลาเดินเครื่อง/หยุด ของเครื่องหนึ่ง จากฐาน Workcenter
+
+    เวลาเดินเครื่องจริง (net) = รวมช่วง Start→End ของงานผลิตแบบไม่นับซ้อนกัน
+    เวลาตามแผน (plan)        = จำนวนวันที่มีบันทึก × 480 นาที (กะเดียว 8 ชม.)
+    """
+    g = data[data["Machine"] == mc]
+    if g.empty:
+        return {}
+    prod = g[~g["IsDowntime"]]
+    net_by_month, net_by_day, net_total = {}, {}, 0.0
+    for d, dg in prod.groupby("Date"):
+        # ตัดช่วงให้อยู่ในวันนั้น กันงาน batch ข้ามคืนทำให้เวลาบวมเกินจริง
+        lo, hi = pd.Timestamp(d), pd.Timestamp(d) + pd.Timedelta(days=1)
+        mins = merged_minutes(list(zip(dg["Start"].clip(lo, hi),
+                                       dg["End"].clip(lo, hi))))
+        net_total += mins
+        net_by_day[d] = mins
+        net_by_month[pd.Timestamp(d).to_period("M")] = (
+            net_by_month.get(pd.Timestamp(d).to_period("M"), 0.0) + mins
+        )
+
+    days = g["Date"].nunique()
+    last = g.loc[g["End"].idxmax()]
+    out = {
+        "net": net_total,
+        "plan": days * PLAN_MINUTES_PER_DAY,
+        "days": days,
+        "d0": g["Date"].min(),
+        "d1": g["Date"].max(),
+        "net_by_month": net_by_month,
+        "net_by_day": net_by_day,
+        "qty": float(prod["Qty"].sum()),
+        "jobs": int(prod["Job"].nunique()),
+        # ข้อมูลกิจกรรมล่าสุด — ใช้บอกสถานะการทำงานล่าสุดของเครื่อง
+        "last_end": last["End"],
+        "last_start": last["Start"],
+        "last_kind": last["ประเภทงาน"],
+        "last_reason": last["สาเหตุ"],
+        "last_name": last["Name"],
+        "last_job": str(last["Job"]),
+        "last_desc": str(last.get("Description", "") or ""),
+        "last_prod_date": prod["Date"].max() if not prod.empty else None,
+    }
+    # แยกงานหยุดตามรหัส Job: P = เปลี่ยนอุปกรณ์ตามแผน, B = แจ้งซ่อม, BP = ช่างซ่อม
+    for key, label in (("P", "P - หยุดตามแผน"), ("B", "B - แจ้งซ่อม (รอช่าง)"),
+                       ("BP", "BP - ช่างเข้าซ่อม")):
+        sub = g[g["ประเภทงาน"] == label]
+        out[f"{key}_count"] = len(sub)
+        out[f"{key}_min"] = float(sub["DurationMin"].sum())
+        out[f"{key}_by_month"] = (
+            sub.groupby(sub["Start"].dt.to_period("M")).size().to_dict()
+        )
+    # เวลาหยุดเครื่องจริงต่อเหตุการณ์ (แจ้งซ่อม → ซ่อมเสร็จ) — ตัวตั้งของ MTTR
+    pairs = pair_repairs(g[g["ประเภทงาน"] == "B - แจ้งซ่อม (รอช่าง)"],
+                         g[g["ประเภทงาน"] == "BP - ช่างเข้าซ่อม"])
+    out["downtime_min"] = float(pairs["downtime_min"].sum()) if not pairs.empty else 0.0
+    out["wait_min_avg"] = (float(pairs.loc[pairs["matched"], "wait_min"].mean())
+                           if not pairs.empty and pairs["matched"].any() else None)
+    p_rows = g[g["ประเภทงาน"] == "P - หยุดตามแผน"]
+    out["p_reasons"] = (
+        p_rows.groupby("สาเหตุ")["DurationMin"]
+        .agg(["sum", "count"]).reset_index()
+        .sort_values("sum", ascending=False)
+        if not p_rows.empty else pd.DataFrame()
+    )
+    return out
 
 
 def merged_minutes(intervals: list[tuple]) -> float:
@@ -461,10 +676,20 @@ except Exception:
         "⚠️ อ่านฐาน MTBF-MTTR ไม่ได้ชั่วคราว (ไฟล์ถูกเปิดอยู่/กำลัง sync) — "
         "ส่วน MTBF/MTTR จะว่างจนกว่าจะอ่านได้ แอปจะลองใหม่เมื่อรีเฟรช"
     )
-try:
-    oee_runtime = load_oee_runtime(folder_signature())
-except Exception:
-    oee_runtime = pd.DataFrame()
+def _load_or_warn(loader, label):
+    """โหลดฐานเสริม — ถ้าอ่านพลาดชั่วคราว (ไฟล์ล็อก/กำลัง sync) ใช้ค่าว่างเฉพาะ
+    รอบนี้ พร้อมเตือนที่ sidebar ให้รู้ตัว (จะลองอ่านใหม่เองในรอบถัดไป)"""
+    try:
+        return loader(folder_signature())
+    except Exception:
+        st.sidebar.warning(f"⚠️ อ่าน{label}ไม่ได้ชั่วคราว — "
+                           "จะลองใหม่เมื่อรีเฟรช/ไฟล์ sync เสร็จ")
+        return pd.DataFrame()
+
+
+oee_runtime = _load_or_warn(load_oee_runtime, "ฐาน OEE")
+registry = _load_or_warn(load_registry, "ทะเบียนเครื่องจักร")
+repair = _load_or_warn(load_repair, "ฐานใบงานซ่อม")
 watch_folder()
 
 # หมวดเครื่องจากฐาน Workcenter เป็นหลัก — ที่ขาดค่อยเติมจากฐาน MTBF-MTTR
@@ -529,7 +754,8 @@ with st.sidebar:
         "**ไฟล์ในโฟลเดอร์:**\n\n"
         + "\n".join(
             f"- {name} · อัปเดต {datetime.fromtimestamp(mt):%d/%m %H:%M}"
-            for name, mt in files
+            # entry แรกคือ ("logic", เวอร์ชันโค้ด) ไม่ใช่ไฟล์ — ข้าม
+            for name, mt in files if isinstance(mt, (int, float))
         )
     )
     if st.button("🔄 โหลดข้อมูลใหม่", width="stretch",
@@ -588,9 +814,10 @@ def reference_time() -> tuple[pd.Timestamp, bool]:
 # ---------------------------------------------------------------------------
 # แท็บหลัก
 # ---------------------------------------------------------------------------
-tab_live, tab_timeline, tab_down, tab_mtbf, tab_perf, tab_raw = st.tabs(
+(tab_live, tab_timeline, tab_down, tab_mtbf, tab_profile,
+ tab_perf, tab_raw) = st.tabs(
     ["🟢 สถานะสด", "📅 Timeline", "⏱ การหยุดเครื่อง", "🔧 MTBF / MTTR",
-     "📊 ผลงาน", "📋 ข้อมูลดิบ"]
+     "🔍 โปรไฟล์เครื่องจักร", "📊 ผลงาน", "📋 ข้อมูลดิบ"]
 )
 
 # --- 1) สถานะสด — rerun ตัวเองทุก 1 นาที ให้เวลาว่าง/สถานะเดินเอง ---
@@ -685,8 +912,13 @@ with tab_timeline:
 
     # กรอบเวลาของกราฟ = 06:00–24:00 ของวันที่เลือก — งาน batch ข้ามวันถูกตัดปลายที่เที่ยงคืน
     day0 = pd.Timestamp(sel_date)
-    tl_start = day0 + pd.Timedelta(hours=6)
     tl_end = day0 + pd.Timedelta(days=1)
+    # ปกติเริ่มแสดงที่ 06:00 แต่ถ้าวันนั้นมีสแกนก่อนหน้านั้น ขยับกรอบตาม
+    # เพื่อไม่ให้มีรายการหลุดออกจากกราฟแบบเงียบ ๆ
+    _same_day = plot["Start"][(plot["Start"] >= day0) & (plot["Start"] < tl_end)]
+    tl_start = min(day0 + pd.Timedelta(hours=6),
+                   _same_day.min().floor("30min") if not _same_day.empty
+                   else day0 + pd.Timedelta(hours=6))
     shift_start = day0 + pd.Timedelta(hours=SHIFT_START_HOUR)
     shift_end = day0 + pd.Timedelta(hours=SHIFT_END_HOUR)
 
@@ -742,6 +974,10 @@ with tab_timeline:
     layered = (
         alt.layer(bg_bands, shift_rules, gantt)
         .resolve_scale(color="independent")
+        # width="container" ให้กราฟยืดเต็มความกว้างการ์ด — ถ้าไม่ใส่ กราฟแบบ layer
+        # จะใช้ความกว้างมาตรฐานของ Vega แล้วเหลือช่องว่างค้างด้านซ้าย
+        .properties(width="container",
+                    height=max(320, 22 * plot["Machine"].nunique()))
         .interactive()
     )
     st.altair_chart(layered, width="stretch")
@@ -773,10 +1009,14 @@ with tab_timeline:
         series.append(avg_slots)
     trend = pd.concat(series, ignore_index=True)
     trend["slot"] = day0 + pd.to_timedelta(trend["slot_idx"] * 30, unit="m")
+    # ตัดช่วงก่อนกรอบเวลาแสดงผลทิ้ง — จุดที่อยู่นอก domain จะถูก Vega วาดล้น
+    # ออกนอกแกนด้านซ้าย ทำให้กราฟดูเอียงทั้งการ์ด
+    trend = trend[trend["slot"] >= tl_start]
 
     peak_line = (
         alt.Chart(trend)
-        .mark_line(strokeWidth=2.5, point=alt.OverlayMarkDef(size=22), interpolate="monotone")
+        .mark_line(strokeWidth=2.5, point=alt.OverlayMarkDef(size=22),
+                   interpolate="monotone", clip=True)
         .encode(
             x=alt.X("slot:T", title="เวลา", axis=alt.Axis(format="%H:%M"),
                     scale=alt.Scale(domain=[tl_start, tl_end])),
@@ -798,7 +1038,9 @@ with tab_timeline:
         .properties(height=300)
     )
     st.altair_chart(
-        alt.layer(bg_bands, shift_rules, peak_line).resolve_scale(color="independent"),
+        alt.layer(bg_bands, shift_rules, peak_line)
+        .resolve_scale(color="independent")
+        .properties(width="container", height=300),
         width="stretch",
     )
     if not sel_slots.empty and sel_slots["เครื่อง"].max() > 0:
@@ -810,36 +1052,126 @@ with tab_timeline:
             "เส้นประสีเทา = ค่าเฉลี่ยวันก่อนหน้า เอาไว้เทียบว่าวันนี้เดินมาก/น้อยกว่าปกติช่วงไหน"
         )
 
+    # --- กราฟการยิงเริ่ม Job รายช่วงเวลา แยกตามประเภทงาน ---
+    st.markdown("---")
+    st.subheader("📊 การยิงเริ่ม Job รายช่วงเวลา (ทุกเครื่อง · วันที่เลือก)")
+
+    # สีตามมาตรฐานฝ่าย: เขียว=ผลิต · เหลือง=P · แดงอ่อน=B · แดงเข้ม=BP
+    JOB_KINDS = {
+        "PROD - งานผลิต": ("งานผลิต", COLOR_WORK),
+        "P - หยุดตามแผน": ("เปลี่ยนอุปกรณ์ P", COLOR_P),
+        "B - แจ้งซ่อม (รอช่าง)": ("แจ้งเตือน B", COLOR_B),
+        "BP - ช่างเข้าซ่อม": ("ช่างซ่อม BP", COLOR_BP),
+    }
+    starts = day_df.copy()
+    starts["ประเภท"] = starts["ประเภทงาน"].map(lambda k: JOB_KINDS.get(k, (None,))[0])
+    starts = starts[starts["ประเภท"].notna()]
+    # จัดลงช่องเวลาละ 30 นาที ตามเวลาที่ "เริ่ม" ยิง Job
+    starts = starts[(starts["Start"] >= tl_start) & (starts["Start"] < tl_end)]
+
+    if starts.empty:
+        st.caption("ไม่มีการยิง Job ในวันที่เลือก")
+    else:
+        starts["ช่อง"] = starts["Start"].dt.floor("30min")
+        grid = pd.MultiIndex.from_product(
+            [pd.date_range(tl_start, tl_end, freq="30min", inclusive="left"),
+             [v[0] for v in JOB_KINDS.values()]],
+            names=["ช่อง", "ประเภท"],
+        )
+        by_slot = (
+            starts.groupby(["ช่อง", "ประเภท"]).size()
+            .reindex(grid, fill_value=0).rename("job").reset_index()
+        )
+        totals = (
+            by_slot.groupby("ช่อง")["job"].sum().reset_index()
+            .rename(columns={"job": "รวมทุกหมวด"})
+        )
+        kind_names = [v[0] for v in JOB_KINDS.values()]
+        kind_colors = [v[1] for v in JOB_KINDS.values()]
+
+        base_j = alt.Chart(by_slot).encode(
+            x=alt.X("ช่อง:T", title=None, axis=alt.Axis(format="%H:%M"),
+                    scale=alt.Scale(domain=[tl_start, tl_end])))
+        lines = base_j.mark_line(
+            strokeWidth=2.5, interpolate="monotone", clip=True,
+            point=alt.OverlayMarkDef(filled=True, size=45),
+        ).encode(
+            y=alt.Y("job:Q", title="จำนวน Job ที่เริ่มยิง"),
+            color=alt.Color("ประเภท:N",
+                            scale=alt.Scale(domain=kind_names, range=kind_colors),
+                            legend=alt.Legend(orient="bottom", title=None)),
+            tooltip=[alt.Tooltip("ช่อง:T", title="ช่วงเวลา", format="%H:%M"),
+                     alt.Tooltip("ประเภท:N"),
+                     alt.Tooltip("job:Q", title="จำนวน Job")],
+        )
+        total_line = (
+            alt.Chart(totals)
+            .mark_line(color="#9a9891", strokeWidth=1.5, strokeDash=[6, 4],
+                       interpolate="monotone", clip=True)
+            .encode(
+                x=alt.X("ช่อง:T", scale=alt.Scale(domain=[tl_start, tl_end])),
+                y=alt.Y("รวมทุกหมวด:Q"),
+                tooltip=[alt.Tooltip("ช่อง:T", title="ช่วงเวลา", format="%H:%M"),
+                         alt.Tooltip("รวมทุกหมวด:Q", title="รวมทุกหมวด")],
+            )
+        )
+        st.altair_chart(
+            alt.layer(bg_bands, shift_rules, total_line, lines)
+            .resolve_scale(color="independent")
+            .properties(width="container", height=340),
+            width="stretch",
+        )
+
+        pk_row = totals.loc[totals["รวมทุกหมวด"].idxmax()]
+        pk_t = pd.Timestamp(pk_row["ช่อง"])
+        n_prod = int(by_slot[by_slot["ประเภท"] == "งานผลิต"]["job"].sum())
+        n_shift = int(totals[(totals["ช่อง"] >= shift_start)
+                             & (totals["ช่อง"] < shift_end)]["รวมทุกหมวด"].sum())
+        n_ot = int(totals["รวมทุกหมวด"].sum()) - n_shift
+        st.caption(
+            f"รวมทั้งวัน **{int(totals['รวมทุกหมวด'].sum()):,} job** "
+            f"(งานผลิต {n_prod:,}) · พีคช่วง "
+            f"**{pk_t:%H:%M}–{pk_t + pd.Timedelta(minutes=30):%H:%M}** "
+            f"({int(pk_row['รวมทุกหมวด']):,} job) · "
+            f"ในกะ {n_shift:,} job · OT {n_ot:,} job · "
+            "เส้นประเทา = รวมทุกหมวด · พื้นเขียว = กะปกติ พื้นส้ม = OT"
+        )
+
 # --- 3) การหยุดเครื่อง ---
 with tab_down:
     down = day_df[day_df["IsDowntime"]]
     if down.empty:
         st.success("วันนี้ไม่มีบันทึกการหยุดเครื่อง 🎉")
     else:
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         c1.metric("เหตุการณ์หยุดเครื่อง", f"{len(down)} ครั้ง", border=True)
         c2.metric("เวลาหยุดรวม", f"{down['DurationMin'].sum():,.0f} นาที", border=True)
-        c3.metric("เครื่องที่ได้รับผลกระทบ", f"{down['Machine'].nunique()} เครื่อง", border=True)
+
+        # เตรียมข้อมูลทั้งสองกราฟก่อน เพื่อคำนวณ "ความสูงร่วม" ให้การ์ดซ้าย-ขวาเท่ากัน
+        pareto = (
+            down.groupby("สาเหตุ")["DurationMin"].sum()
+            .reset_index().sort_values("DurationMin", ascending=False)
+        )
+        _order_n = min(15, down["Machine"].nunique())
+        # แถวของสองกราฟไม่เท่ากัน — ใช้ความสูงเดียวกัน แล้วให้แต่ละกราฟเกลี่ยแถบเอง
+        shared_h = max(60 + 40 * len(pareto), 60 + 26 * _order_n, 320)
 
         col_l, col_r = st.columns(2)
         with col_l:
             with st.container(border=True):
                 st.subheader("สาเหตุการหยุด (Pareto)")
-                pareto = (
-                    down.groupby("สาเหตุ")["DurationMin"].sum()
-                    .reset_index().sort_values("DurationMin", ascending=False)
-                )
                 chart = (
                     alt.Chart(pareto)
                     .mark_bar(color="#d03b3b", cornerRadiusTopRight=4,
-                              cornerRadiusBottomRight=4, size=24)
+                              cornerRadiusBottomRight=4)
                     .encode(
-                        y=alt.Y("สาเหตุ:N", sort="-x", title=None),
+                        y=alt.Y("สาเหตุ:N", sort="-x", title=None,
+                                scale=alt.Scale(paddingInner=0.35)),
                         x=alt.X("DurationMin:Q", title="นาทีรวม"),
                         tooltip=[alt.Tooltip("สาเหตุ:N"),
                                  alt.Tooltip("DurationMin:Q", title="นาที", format=",.0f")],
                     )
-                    .properties(height=60 + 40 * len(pareto))
+                    .properties(height=shared_h)
                 )
                 st.altair_chart(chart, width="stretch")
         with col_r:
@@ -852,14 +1184,16 @@ with tab_down:
                 chart = (
                     alt.Chart(by_mc)
                     .mark_bar(color="#d03b3b", cornerRadiusTopRight=4,
-                              cornerRadiusBottomRight=4, size=18)
+                              cornerRadiusBottomRight=4)
                     .encode(
-                        y=alt.Y("Machine:N", sort="-x", title=None),
+                        y=alt.Y("Machine:N", sort="-x", title=None,
+                                scale=alt.Scale(paddingInner=0.35)),
                         x=alt.X("DurationMin:Q", title="นาทีรวม"),
                         tooltip=[alt.Tooltip("Machine:N"),
-                                 alt.Tooltip("DurationMin:Q", title="นาที", format=",.0f")],
+                                 alt.Tooltip("DurationMin:Q", title="นาที",
+                                             format=",.0f")],
                     )
-                    .properties(height=60 + 26 * len(by_mc))
+                    .properties(height=shared_h)
                 )
                 st.altair_chart(chart, width="stretch")
 
@@ -885,8 +1219,8 @@ with tab_mtbf:
 
         # ขอบเขตวันที่ = ช่วงที่ "มีเหตุการณ์ซ่อมจริง" ในฐานข้อมูล (B/BP)
         # ไม่ใช่ช่วงของไฟล์ทั้งไฟล์ — กันไม่ให้ค่าเริ่มต้นไปตกวันที่ยังไม่มีข้อมูล
-        repair = ev[ev["ประเภท"].isin(["Breakdown", "Maintenance"])]
-        bounds_src = repair if not repair.empty else ev
+        repair_ev = ev[ev["ประเภท"].isin(["Breakdown", "Maintenance"])]
+        bounds_src = repair_ev if not repair_ev.empty else ev
         ev_min, ev_max = bounds_src["Date"].min(), bounds_src["Date"].max()
 
         PRESETS = {"ทั้งหมด": None, "90 วันล่าสุด": 90, "30 วันล่าสุด": 30,
@@ -935,123 +1269,154 @@ with tab_mtbf:
                 run_groups = run["MC"].map(cat_map)
                 run = run[run_groups.isin(sel_groups)]
 
+        # ---- เจาะจงเครื่อง (นอกเหนือจากตัวกรองกลุ่มที่แถบด้านซ้าย) ----
+        mc_pool = sorted(set(ev["Machine"]) | (set(run["MC"]) if not run.empty else set()))
+        sel_mcs = st.multiselect(
+            "เจาะจงเครื่องจักร", mc_pool, default=[],
+            placeholder="ทุกเครื่องในกลุ่มที่เลือก — เลือกได้หลายเครื่องเพื่อเทียบกัน",
+            key="mtbf_machines",
+            help="กรองเฉพาะเครื่องที่สนใจ ทุกตัวเลขและกราฟในแท็บนี้จะคิดใหม่ตามที่เลือก",
+        )
+        if sel_mcs:
+            ev = ev[ev["Machine"].isin(sel_mcs)]
+            if not run.empty:
+                run = run[run["MC"].isin(sel_mcs)]
+            scope = (f"เฉพาะเครื่อง **{', '.join(sel_mcs)}**" if len(sel_mcs) <= 4
+                     else f"เฉพาะ **{len(sel_mcs)} เครื่อง** ที่เลือก")
+        else:
+            scope = (f"ทุกเครื่องในกลุ่ม **{', '.join(sel_groups)}**" if sel_groups
+                     else f"ทุกเครื่อง (**{len(mc_pool)}** เครื่อง)")
+        st.caption(f"🎯 ขอบเขตที่กำลังดู: {scope}")
+
         bd = ev[ev["ประเภท"] == "Breakdown"]
         mt = ev[ev["ประเภท"] == "Maintenance"]
         n_bd = len(bd)
         bd_min = bd["DurationMin"].sum()
         runtime_min = run["เวลาทำงานจริง/วัน"].sum() if not run.empty else 0.0
-        fleet_mttr = bd_min / n_bd if n_bd else 0.0
+
+        # จับคู่ B→BP ครั้งเดียว แล้วใช้ผลร่วมกันทั้งแท็บ
+        pr = pair_repairs(bd, mt)
+        downtime_total = pr["downtime_min"].sum() if not pr.empty else 0.0
+        # MTTR ตามนิยามมาตรฐาน = เวลาที่เครื่องหยุดผลิตจริง (แจ้ง → ซ่อมเสร็จ) ÷ ครั้งที่เสีย
+        fleet_mttr = downtime_total / n_bd if n_bd else 0.0
+        # MTBF = เวลาเดินเครื่องจริง ÷ ครั้งที่เสีย
+        # (เวลาทำงานจริงจากฐาน OEE หักเวลาสูญเสียออกแล้ว จึงเป็น uptime ล้วน)
         fleet_mtbf = runtime_min / 60 / n_bd if n_bd and runtime_min else None
 
+        net_op_h = runtime_min / 60
+        down_h = downtime_total / 60
+        # ป้ายเปลี่ยนตามขอบเขตที่กรอง — เลือกเครื่องเดียวแล้วยังเขียน "ทั้งฝ่าย" จะเข้าใจผิด
+        if sel_mcs:
+            suffix = f" — {sel_mcs[0]}" if len(sel_mcs) == 1 else f" — {len(sel_mcs)} เครื่อง"
+        elif sel_groups:
+            suffix = f" — กลุ่ม{sel_groups[0]}" if len(sel_groups) == 1 else " — กลุ่มที่เลือก"
+        else:
+            suffix = " เฉลี่ยทั้งฝ่าย"
         with st.container(horizontal=True):
+            st.metric("⚙️ Net Operation Time", f"{net_op_h:,.1f} ชม.", border=True,
+                      help="เวลาเดินเครื่องจริงรวมของทุกเครื่องในช่วงที่เลือก "
+                           "(ฐาน OEE — หักเวลาสูญเสียออกแล้ว) · เป็นตัวตั้งของ MTBF")
             st.metric("🔴 แจ้งซ่อม (B)", f"{n_bd} ครั้ง", border=True,
-                      help="Job B000000001 — ผู้คุมเครื่องแจ้งเครื่องเสีย")
-            st.metric("เวลาแจ้งซ่อมรวม (B)", f"{bd_min / 60:,.1f} ชม.", border=True)
-            st.metric("MTTR เฉลี่ยทั้งฝ่าย", f"{fleet_mttr:,.1f} นาที/ครั้ง", border=True,
-                      help="เวลาแจ้งซ่อม (B) รวม ÷ จำนวนครั้ง")
-            st.metric(
-                "MTBF เฉลี่ยทั้งฝ่าย",
-                f"{fleet_mtbf:,.1f} ชม." if fleet_mtbf else "—",
-                border=True,
-                help="เวลาทำงานจริงรวม (จากฐาน OEE) ÷ จำนวนครั้ง Breakdown",
-            )
+                      help="Job B000000001 — ผู้คุมเครื่องแจ้งเครื่องเสีย = จำนวนครั้งที่เสีย")
             st.metric("🔧 ช่างเข้าซ่อม (BP)", f"{len(mt)} ครั้ง", border=True,
                       help="Job BP00000001 — ช่างเข้าซ่อมจริง")
-            st.metric("เวลาช่างซ่อมรวม (BP)", f"{mt['DurationMin'].sum() / 60:,.1f} ชม.",
-                      border=True)
+            st.metric(
+                f"MTBF{suffix}",
+                f"{fleet_mtbf:,.1f} ชม." if fleet_mtbf else "—",
+                border=True,
+                help="Net Operation Time ÷ จำนวนครั้งที่เสีย · ยิ่งสูงยิ่งดี",
+            )
+            st.metric(f"MTTR{suffix}", f"{fleet_mttr:,.1f} นาที/ครั้ง", border=True,
+                      help="เวลาหยุดเครื่องรวม (แจ้งซ่อม B เริ่ม → ช่างซ่อมเสร็จ BP จบ) "
+                           "÷ จำนวนครั้งที่เสีย · ยิ่งต่ำยิ่งดี")
+            st.metric("⛔ เวลาหยุดเครื่องรวม", f"{down_h:,.1f} ชม.", border=True,
+                      help="ผลรวมเวลาที่เครื่องหยุดผลิตเพราะเสีย (Downtime)")
+            st.metric("Availability",
+                      f"{net_op_h / (net_op_h + down_h) * 100:,.1f}%"
+                      if net_op_h else "—", border=True,
+                      help="Net Operation Time ÷ (Net Operation Time + Downtime)")
+        if fleet_mtbf:
+            mttr_h = fleet_mttr / 60
+            st.caption(
+                f"📐 **MTBF** = Net Operation Time {net_op_h:,.1f} ชม. ÷ {n_bd} ครั้งที่เสีย "
+                f"= **{fleet_mtbf:,.1f} ชม./ครั้ง**  ·  "
+                f"**MTTR** = เวลาหยุดเครื่อง {down_h:,.1f} ชม. ({downtime_total:,.0f} นาที) "
+                f"÷ {n_bd} ครั้งที่เสีย = **{fleet_mttr:,.1f} นาที/ครั้ง**  ·  "
+                f"**Availability** = MTBF ÷ (MTBF + MTTR) = {fleet_mtbf:,.1f} ÷ "
+                f"({fleet_mtbf:,.1f} + {mttr_h:,.2f}) = "
+                f"**{fleet_mtbf / (fleet_mtbf + mttr_h) * 100:,.1f}%**"
+            )
 
         # ---- เชื่อมโยงเหตุการณ์ แจ้งซ่อม (B) → ช่างเข้าซ่อม (BP) ----
         # จับคู่: BP ครั้งแรกของเครื่องเดียวกันที่เริ่มหลังการแจ้ง (ภายใน 8 ชม.หลังจบ B)
         st.markdown("---")
         st.subheader("🔗 เชื่อมโยง แจ้งซ่อม (B) → ช่างเข้าซ่อม (BP)")
-        bp_pool = mt.sort_values("Start")
-        used_bp = set()
-        pair_rows = []
-        for _, b_row in bd.sort_values("Start").iterrows():
-            cand = bp_pool[
-                (bp_pool["Machine"] == b_row["Machine"])
-                & (bp_pool["Start"] >= b_row["Start"])
-                & (bp_pool["Start"] <= b_row["End"] + pd.Timedelta(hours=8))
-                & (~bp_pool.index.isin(used_bp))
-            ]
-            if not cand.empty:
-                bp_row = cand.iloc[0]
-                used_bp.add(cand.index[0])
-                wait_min = (bp_row["Start"] - b_row["Start"]).total_seconds() / 60
-                pair_rows.append({
-                    "วันที่": b_row["Start"].strftime("%d/%m/%Y"),
-                    "เครื่อง": b_row["Machine"],
-                    "สาเหตุ (จากการแจ้ง)": str(b_row["Reason"]),
-                    "แจ้งซ่อม": b_row["Start"].strftime("%H:%M"),
-                    "ช่างเริ่มซ่อม": bp_row["Start"].strftime("%H:%M"),
-                    "ซ่อมเสร็จ": bp_row["End"].strftime("%H:%M"),
-                    "รอช่าง (นาที)": round(wait_min, 1),
-                    "ช่างซ่อม (นาที)": round(bp_row["DurationMin"], 1),
-                    "รวมหยุด (นาที)": round(
-                        (bp_row["End"] - b_row["Start"]).total_seconds() / 60, 1),
-                    "จับคู่": "✅",
-                    "_sort": b_row["Start"],
-                })
-            else:
-                pair_rows.append({
-                    "วันที่": b_row["Start"].strftime("%d/%m/%Y"),
-                    "เครื่อง": b_row["Machine"],
-                    "สาเหตุ (จากการแจ้ง)": str(b_row["Reason"]),
-                    "แจ้งซ่อม": b_row["Start"].strftime("%H:%M"),
-                    "ช่างเริ่มซ่อม": "—",
-                    "ซ่อมเสร็จ": "—",
-                    "รอช่าง (นาที)": None,
-                    "ช่างซ่อม (นาที)": None,
-                    "รวมหยุด (นาที)": round(b_row["DurationMin"], 1),
-                    "จับคู่": "⚠️ ไม่พบ BP",
-                    "_sort": b_row["Start"],
-                })
-        pairs = pd.DataFrame(pair_rows)
-        if pairs.empty:
+        if pr.empty:
             st.info("ไม่มีเหตุการณ์แจ้งซ่อม (B) ในช่วงที่เลือก")
         else:
-            matched = pairs[pairs["จับคู่"] == "✅"]
+            matched = pr[pr["matched"]]
             with st.container(horizontal=True):
-                st.metric("จับคู่ B→BP ได้", f"{len(matched)} / {len(pairs)} ครั้ง",
+                st.metric("จับคู่ B→BP ได้", f"{len(matched)} / {len(pr)} ครั้ง",
                           border=True)
                 if not matched.empty:
-                    st.metric("⏳ รอช่างเฉลี่ย", f"{matched['รอช่าง (นาที)'].mean():,.1f} นาที",
-                              border=True,
-                              help="เวลาแจ้งซ่อม (B เริ่ม) → ช่างเริ่มซ่อม (BP เริ่ม)")
-                    st.metric("🔧 ช่างซ่อมเฉลี่ย", f"{matched['ช่างซ่อม (นาที)'].mean():,.1f} นาที",
-                              border=True, help="ระยะเวลางาน BP ต่อครั้ง")
-                    st.metric("รวมหยุดเฉลี่ยต่อเหตุการณ์",
-                              f"{matched['รวมหยุด (นาที)'].mean():,.1f} นาที", border=True,
-                              help="แจ้งซ่อม (B เริ่ม) → ซ่อมเสร็จ (BP จบ)")
+                    st.metric("⏳ รอช่างเฉลี่ย",
+                              f"{matched['wait_min'].mean():,.1f} นาที", border=True,
+                              help="แจ้งซ่อม (B เริ่ม) → ช่างเริ่มซ่อม (BP เริ่ม)")
+                    st.metric("🔧 ช่างซ่อมเฉลี่ย",
+                              f"{matched['repair_min'].mean():,.1f} นาที", border=True,
+                              help="ระยะเวลางาน BP ต่อครั้ง")
+                st.metric("⛔ หยุดเครื่องเฉลี่ย (= MTTR)",
+                          f"{pr['downtime_min'].mean():,.1f} นาที", border=True,
+                          help="แจ้งซ่อม (B เริ่ม) → ซ่อมเสร็จ (BP จบ) — "
+                               "ค่านี้คือ MTTR ที่ใช้ทั้งระบบ")
+            show_pairs = pd.DataFrame({
+                "วันที่": pr["b_start"].dt.strftime("%d/%m/%Y"),
+                "เครื่อง": pr["Machine"],
+                "สาเหตุ (จากการแจ้ง)": pr["Reason"].astype(str),
+                "แจ้งซ่อม": pr["b_start"].dt.strftime("%H:%M"),
+                "ช่างเริ่มซ่อม": pr["bp_start"].dt.strftime("%H:%M").fillna("—"),
+                "ซ่อมเสร็จ": pr["bp_end"].dt.strftime("%H:%M").fillna("—"),
+                "รอช่าง (นาที)": pr["wait_min"].round(1),
+                "ช่างซ่อม (นาที)": pr["repair_min"].round(1),
+                "หยุดเครื่อง (นาที)": pr["downtime_min"].round(1),
+                "จับคู่": pr["matched"].map({True: "✅", False: "⚠️ ไม่พบ BP"}),
+                "_sort": pr["b_start"],
+            })
             st.dataframe(
-                pairs.sort_values("_sort", ascending=False).drop(columns="_sort"),
+                show_pairs.sort_values("_sort", ascending=False).drop(columns="_sort"),
                 width="stretch", hide_index=True, height=360,
             )
             st.caption(
-                "จับคู่จากชีต Breakdown_B000000001 กับ Maintenance_BP00000001 ในฐาน MTBF-MTTR: "
-                "เครื่องเดียวกัน และ BP เริ่มหลังการแจ้งภายใน 8 ชม. · "
-                "⚠️ ไม่พบ BP = แจ้งเสียแล้วแต่ไม่มีบันทึกช่างเข้าซ่อมตามมา"
+                f"จับคู่จากชีต Breakdown_B000000001 กับ Maintenance_BP00000001: "
+                f"เครื่องเดียวกัน และ BP เริ่มภายใน {PAIR_WINDOW_HOURS} ชม. หลังใบแจ้งปิด · "
+                "⚠️ ไม่พบ BP = แจ้งเสียแล้วไม่มีบันทึกช่างเข้าซ่อม "
+                "(ใช้ระยะเวลาใบแจ้งเป็นเวลาหยุดแทน ซึ่งอาจต่ำกว่าจริง)"
             )
 
         # ตารางรายเครื่อง
         rows = []
         run_by_mc = run.groupby("MC")["เวลาทำงานจริง/วัน"].sum() if not run.empty else pd.Series(dtype=float)
         machines_in_scope = sorted(set(ev["Machine"]) | set(run_by_mc.index))
+        down_by_mc = pr.groupby("Machine")["downtime_min"].sum() if not pr.empty \
+            else pd.Series(dtype=float)
         for mc in machines_in_scope:
             b = bd[bd["Machine"] == mc]
             m = mt[mt["Machine"] == mc]
             rt_min = float(run_by_mc.get(mc, 0.0))
+            dt_min = float(down_by_mc.get(mc, 0.0))
             n = len(b)
             rows.append({
                 "เครื่อง": mc,
                 "หมวดหมู่": cat_map.get(mc, "—"),
                 "Breakdown (ครั้ง)": n,
-                "Breakdown (ชม.)": round(b["DurationMin"].sum() / 60, 2),
-                "MTTR (นาที/ครั้ง)": round(b["DurationMin"].sum() / n, 1) if n else None,
-                "เวลาทำงานจริง (ชม.)": round(rt_min / 60, 1),
-                "MTBF (ชม.)": round(rt_min / 60 / n, 1) if n and rt_min else None,
+                "เวลาหยุดเครื่อง (ชั่วโมง)": round(dt_min / 60, 2),
+                # MTTR = เวลาหยุดจริง (แจ้ง → ซ่อมเสร็จ) ÷ ครั้งที่เสีย
+                "MTTR (นาที/ครั้ง)": round(dt_min / n, 1) if n else None,
+                "เวลาทำงานจริง (ชั่วโมง)": round(rt_min / 60, 1),
+                "MTBF (ชั่วโมง)": round(rt_min / 60 / n, 1) if n and rt_min else None,
+                "Availability (%)": round(rt_min / (rt_min + dt_min) * 100, 1)
+                                    if rt_min else None,
                 "Maintenance (ครั้ง)": len(m),
-                "Maintenance (ชม.)": round(m["DurationMin"].sum() / 60, 2),
             })
         mtbf_table = pd.DataFrame(rows)
 
@@ -1060,8 +1425,8 @@ with tab_mtbf:
             with st.container(border=True):
                 st.subheader("MTBF ต่ำสุด (เสียบ่อยเทียบเวลาเดินเครื่อง)")
                 worst = (
-                    mtbf_table.dropna(subset=["MTBF (ชม.)"])
-                    .sort_values("MTBF (ชม.)").head(15)
+                    mtbf_table.dropna(subset=["MTBF (ชั่วโมง)"])
+                    .sort_values("MTBF (ชั่วโมง)").head(15)
                 )
                 if worst.empty:
                     st.info("ยังไม่มีเครื่องที่คำนวณ MTBF ได้ในช่วงนี้")
@@ -1072,11 +1437,11 @@ with tab_mtbf:
                                   cornerRadiusBottomRight=4, size=18)
                         .encode(
                             y=alt.Y("เครื่อง:N", sort="x", title=None),
-                            x=alt.X("MTBF (ชม.):Q", title="MTBF (ชั่วโมงทำงานจริง/ครั้ง)"),
+                            x=alt.X("MTBF (ชั่วโมง):Q", title="MTBF (ชั่วโมงทำงานจริง/ครั้ง)"),
                             tooltip=[alt.Tooltip("เครื่อง:N"),
-                                     alt.Tooltip("MTBF (ชม.):Q", format=",.1f"),
+                                     alt.Tooltip("MTBF (ชั่วโมง):Q", format=",.1f"),
                                      alt.Tooltip("Breakdown (ครั้ง):Q"),
-                                     alt.Tooltip("เวลาทำงานจริง (ชม.):Q", format=",.1f")],
+                                     alt.Tooltip("เวลาทำงานจริง (ชั่วโมง):Q", format=",.1f")],
                         )
                         .properties(height=60 + 26 * len(worst))
                     )
@@ -1093,7 +1458,7 @@ with tab_mtbf:
                 else:
                     chart = (
                         alt.Chart(slow)
-                        .mark_bar(color="#eb6834", cornerRadiusTopRight=4,
+                        .mark_bar(color=COLOR_BP, cornerRadiusTopRight=4,
                                   cornerRadiusBottomRight=4, size=18)
                         .encode(
                             y=alt.Y("เครื่อง:N", sort="-x", title=None),
@@ -1101,7 +1466,7 @@ with tab_mtbf:
                             tooltip=[alt.Tooltip("เครื่อง:N"),
                                      alt.Tooltip("MTTR (นาที/ครั้ง):Q", format=",.1f"),
                                      alt.Tooltip("Breakdown (ครั้ง):Q"),
-                                     alt.Tooltip("Breakdown (ชม.):Q", format=",.2f")],
+                                     alt.Tooltip("เวลาหยุดเครื่อง (ชั่วโมง):Q", format=",.2f")],
                         )
                         .properties(height=60 + 26 * len(slow))
                     )
@@ -1113,8 +1478,18 @@ with tab_mtbf:
                 ev.groupby(["Month", "ประเภท"])["DurationMin"].sum()
                 .div(60).reset_index().rename(columns={"DurationMin": "ชั่วโมง"})
             )
-            type_colors = {"Breakdown": "#d03b3b", "Maintenance": "#4a3aa7",
-                           "Planned stop": "#1baf7a"}
+            # % เปลี่ยนแปลงเทียบเดือนก่อน (MoM) ของแต่ละประเภท
+            pv_mo = (monthly.pivot_table(index="Month", columns="ประเภท",
+                                         values="ชั่วโมง", aggfunc="sum")
+                     .sort_index().fillna(0))
+            mom_pct = pv_mo.pct_change() * 100
+            # เก็บเป็นสัดส่วน (หาร 100) เพื่อให้ d3 format "+.0%" เติมเครื่องหมาย % ให้เอง
+            monthly = monthly.merge(
+                (mom_pct / 100).stack().rename("เทียบเดือนก่อน (%)").reset_index(),
+                on=["Month", "ประเภท"], how="left",
+            )
+            type_colors = {"Breakdown": COLOR_B, "Maintenance": COLOR_BP,
+                           "Planned stop": COLOR_P}
             chart = (
                 alt.Chart(monthly)
                 .mark_bar(size=38)
@@ -1126,24 +1501,697 @@ with tab_mtbf:
                                                     range=list(type_colors.values()))),
                     tooltip=[alt.Tooltip("yearmonth(Month):T", title="เดือน", format="%m/%Y"),
                              alt.Tooltip("ประเภท:N"),
-                             alt.Tooltip("ชั่วโมง:Q", format=",.1f")],
+                             alt.Tooltip("ชั่วโมง:Q", format=",.1f"),
+                             alt.Tooltip("เทียบเดือนก่อน (%):Q", title="เทียบเดือนก่อน",
+                                         format="+.0%")],
                 )
                 .properties(height=300)
             )
             st.altair_chart(chart, width="stretch")
 
+            # ---- การ์ดสรุปเดือนล่าสุด เทียบเดือนก่อน แยกประเภท ----
+            if len(pv_mo) >= 2:
+                cur_m, prev_m = pv_mo.index[-1], pv_mo.index[-2]
+                order_types = [t for t in ("Planned stop", "Maintenance", "Breakdown")
+                               if t in pv_mo.columns]
+                mcols = st.columns(len(order_types))
+                for c_st, typ in zip(mcols, order_types):
+                    cur, prev = pv_mo.loc[cur_m, typ], pv_mo.loc[prev_m, typ]
+                    if prev > 0:
+                        d_txt = f"{(cur - prev) / prev * 100:+.0f}% เทียบเดือนก่อน"
+                    elif cur > 0:
+                        d_txt = f"+{cur:,.0f} ชม. (เดือนก่อนเป็น 0)"
+                    else:
+                        d_txt = "0 ทั้งสองเดือน"
+                    # delta_color inverse: เวลาหยุด "เพิ่ม" = แย่ (แดง), "ลด" = ดี (เขียว)
+                    c_st.metric(f"{typ} — {cur_m:%m/%Y}", f"{cur:,.0f} ชม.",
+                                delta=d_txt, delta_color="inverse", border=True)
+                st.caption(
+                    f"⚠️ เดือน {cur_m:%m/%Y} อาจยังเก็บข้อมูลไม่ครบเดือน — "
+                    f"% ที่ลดลงมากอาจมาจากจำนวนวันที่ยังน้อย ไม่ใช่ผลงานจริง"
+                )
+                with st.expander("📋 ตารางรายเดือนทุกประเภท + % เทียบเดือนก่อน"):
+                    tbl = pd.DataFrame(index=pv_mo.index)
+                    for typ in order_types:
+                        tbl[typ + " (ชม.)"] = [
+                            f"{v:,.0f}" + (f"  ({d:+.0f}%)" if pd.notna(d) and abs(d) != float("inf") else "")
+                            for v, d in zip(pv_mo[typ], mom_pct[typ])
+                        ]
+                    tbl.index = tbl.index.strftime("%m/%Y")
+                    tbl.index.name = "เดือน"
+                    st.dataframe(tbl, width="stretch")
+
         st.subheader("ตาราง MTBF / MTTR รายเครื่อง")
         st.dataframe(
-            mtbf_table.sort_values("Breakdown (ชม.)", ascending=False),
+            mtbf_table.sort_values("เวลาหยุดเครื่อง (ชั่วโมง)", ascending=False),
             width="stretch", hide_index=True,
         )
         st.caption(
-            "สูตรมาตรฐานฝ่าย: MTBF = เวลาทำงานจริงรวม (ฐาน OEE) ÷ จำนวนครั้ง Breakdown · "
-            "MTTR = เวลา Breakdown รวม ÷ จำนวนครั้ง Breakdown · "
-            "เครื่องที่ไม่มี Breakdown ในช่วง แสดง MTBF/MTTR เป็นค่าว่าง"
+            "**MTBF** = เวลาทำงานจริงรวม (ฐาน OEE — หักเวลาสูญเสียแล้ว) ÷ จำนวนครั้งที่เสีย · "
+            "**MTTR** = เวลาหยุดเครื่องรวม (แจ้งซ่อม B เริ่ม → ช่างซ่อมเสร็จ BP จบ) ÷ จำนวนครั้งที่เสีย · "
+            "**Availability** = เวลาทำงานจริง ÷ (เวลาทำงานจริง + เวลาหยุดเพราะเสีย) · "
+            "เครื่องที่ไม่มี Breakdown ในช่วงที่เลือก แสดงเป็นค่าว่าง"
         )
 
-# --- 5) ผลงาน ---
+# --- 5) โปรไฟล์เครื่องจักร — รวมทุกฐานข้อมูลของเครื่องเดียวไว้หน้าเดียว ---
+with tab_profile:
+    prof_machines = sorted(set(data["Machine"]) | set(registry.index)
+                           if not registry.empty else set(data["Machine"]))
+    if sel_groups:
+        prof_machines = [m for m in prof_machines
+                         if (cat_map.get(m) in sel_groups
+                             or m in set(day_df["Machine"]))]
+
+    # ---------- ส่วนหัว: เลือกเครื่อง + ชื่อเครื่อง + ป้ายสถานะ ----------
+    c_sel, c_info = st.columns([1, 3], vertical_alignment="center")
+    with c_sel:
+        default_idx = prof_machines.index("CT-51") if "CT-51" in prof_machines else 0
+        mc = st.selectbox("เลือกเครื่องจักร", prof_machines, index=default_idx,
+                          key="profile_machine")
+
+    reg = registry.loc[mc] if (not registry.empty and mc in registry.index) else None
+    prof = machine_runtime_profile(folder_signature(), mc)
+    rep = repair[repair["รหัสเครื่อง"] == mc] if not repair.empty else pd.DataFrame()
+
+    def _reg(field, default="—"):
+        """อ่านค่าจากทะเบียนเครื่อง — คืน default ถ้าว่าง, จัดรูปแบบวันที่ให้เอง"""
+        if reg is None:
+            return default
+        v = reg.get(field)
+        if v is None or (not isinstance(v, str) and pd.isna(v)):
+            return default
+        if isinstance(v, pd.Timestamp):
+            return f"{v:%d/%m/%Y}"
+        return str(v).strip()
+
+    grp = cat_map.get(mc) or (
+        data[data["Machine"] == mc]["Group"].iloc[0]
+        if mc in set(data["Machine"]) else "—")
+    with c_info:
+        st.markdown(f"### {mc} — {_reg('ชื่อเครื่องจักร')}")
+        status_val = _reg("สถานะ", "ไม่มีในทะเบียน")
+        status_badge = (f":green-badge[:material/check_circle: {status_val}]"
+                        if status_val == "ปกติ"
+                        else f":orange-badge[:material/warning: {status_val}]")
+        st.markdown(
+            f"{status_badge} "
+            f":blue-badge[:material/category: {grp}] "
+            f":gray-badge[:material/location_on: {_reg('สถานที่ติดตั้ง')}] "
+            f":violet-badge[:material/build: PM {_reg('ความถี่ PM', 'ไม่ระบุรอบ')}]"
+        )
+
+    if not prof:
+        st.warning(
+            f"เครื่อง {mc} ยังไม่มีบันทึกการสแกนในฐาน Workcenter — "
+            "แสดงเฉพาะข้อมูลทะเบียนและประวัติซ่อม",
+            icon=":material/info:",
+        )
+
+    # ---------- แถบตัวเลขสรุป (KPI strip) ----------
+    age = reg.get("อายุ (ปี)") if reg is not None else None
+    bC = prof.get("B_count", 0)
+    bpC = prof.get("BP_count", 0)
+    net_h = prof.get("net", 0) / 60
+    plan_h = prof.get("plan", 0) / 60
+    pct_plan = net_h / plan_h * 100 if plan_h else 0
+    mtbf = net_h / bC if bC else None
+    # MTTR = เวลาหยุดเครื่องจริง (แจ้งซ่อม → ซ่อมเสร็จ) ÷ จำนวนครั้งที่เสีย
+    # ใช้นิยามเดียวกับแท็บ MTBF/MTTR
+    down_h = prof.get("downtime_min", 0) / 60
+    mttr = prof.get("downtime_min", 0) / bC if bC else None
+    availability = net_h / (net_h + down_h) * 100 if net_h else None
+    cost_total = rep["ค่าใช้จ่ายรวม"].sum() if not rep.empty else 0
+
+    # ช่วงเวลาข้อมูลที่ใช้คำนวณ — แนบไว้กับทุกตัวเลขให้คนอ่านรู้ว่าตัวเลขครอบคลุมถึงไหน
+    period_txt = (f"{prof['d0']:%d/%m/%Y} – {prof['d1']:%d/%m/%Y} "
+                  f"({prof['days']} วันบันทึก)") if prof else "ยังไม่มีข้อมูลสแกน"
+
+    with st.container(horizontal=True):
+        st.metric("อายุการใช้งาน",
+                  f"{age:.1f} ปี" if age is not None and pd.notna(age) else "—",
+                  border=True,
+                  help=f"ติดตั้ง {_reg('วันที่ติดตั้ง')} นับถึงวันนี้")
+        st.metric("MTBF", f"{mtbf:,.0f} ชม." if mtbf else "—", border=True,
+                  help=f"ช่วงข้อมูล {period_txt} · "
+                       "ชม.เดินเครื่องจริงสะสม ÷ จำนวนครั้งที่เสีย (Job B) — ยิ่งสูงยิ่งดี")
+        st.metric("MTTR", f"{mttr:,.0f} นาที" if mttr else "—", border=True,
+                  help=f"ช่วงข้อมูล {period_txt} · "
+                       "เวลาหยุดเครื่องรวม (แจ้งซ่อม B เริ่ม → ช่างซ่อมเสร็จ BP จบ) "
+                       "÷ จำนวนครั้งที่เสีย — ยิ่งต่ำยิ่งดี")
+        st.metric("Availability",
+                  f"{availability:,.1f}%" if availability else "—", border=True,
+                  help=f"ช่วงข้อมูล {period_txt} · "
+                       "เวลาเดินเครื่องจริง ÷ (เวลาเดินเครื่องจริง + เวลาหยุดเพราะเสีย)")
+        st.metric("ชม.เดินเครื่องสะสม", f"{net_h:,.0f}" if prof else "—",
+                  border=True,
+                  help=f"ช่วงข้อมูล {period_txt} · "
+                       f"{pct_plan:.0f}% ของเวลากะปกติ {plan_h:,.0f} ชม. "
+                       f"({PLAN_MINUTES_PER_DAY / 60:.0f} ชม./วัน × "
+                       f"{prof.get('days', 0)} วันบันทึก) — เกิน 100% = มีเดินช่วง OT")
+        st.metric("ผลผลิตสะสม",
+                  f"{prof['qty']:,.0f} ชิ้น" if prof else "—", border=True,
+                  help=f"ช่วงข้อมูล {period_txt} · {prof.get('jobs', 0):,} Job"
+                  if prof else None)
+        # ราคาทุนตามบัญชีจากทะเบียนเครื่องจักร — ใช้เทียบกับค่าซ่อมสะสม
+        asset_cost = None
+        if reg is not None:
+            _v = pd.to_numeric(reg.get("ราคาทุนตามบัญชี (บาท)"), errors="coerce")
+            if pd.notna(_v) and _v > 0:
+                asset_cost = float(_v)
+        repair_ratio = (cost_total / asset_cost * 100
+                        if asset_cost and cost_total else None)
+        st.metric("ค่าซ่อมเครื่องสะสม 2020–26",
+                  f"฿{cost_total:,.0f}" if not rep.empty else "—", border=True,
+                  help=(f"{len(rep):,} ใบงานซ่อม · เฉพาะงานซ่อมเครื่องจักร "
+                        "(ไม่รวมหมวดซ่อมสร้าง เช่น ทำรั้ว/โครงสร้างรอบเครื่อง — "
+                        "หน้า Dashboard ซ่อมบำรุง 6 หมวดรวมทุกหมวด ตัวเลขจึงต่างกันได้)"
+                        + (f" · คิดเป็น {repair_ratio:.1f}% ของราคาเครื่อง"
+                           if repair_ratio is not None else ""))
+                  if not rep.empty else None)
+        st.metric("มูลค่าเครื่อง (บัญชี)",
+                  f"฿{asset_cost:,.0f}" if asset_cost else "—", border=True,
+                  help="ราคาทุนตามบัญชี จากทะเบียนเครื่องจักร"
+                       + (f" · ASSET {_reg('เลขทรัพย์สินบัญชี (ASSET CODE)')}"
+                          if reg is not None else ""))
+
+    rep_period = ""
+    if not rep.empty:
+        _y = rep["ปี"].astype(int)
+        rep_period = f" · ค่าซ่อม: ปี {_y.min()}–{_y.max()} ({len(rep):,} ใบงาน)"
+    st.caption(
+        f"📅 **ช่วงข้อมูลที่ใช้คำนวณ** — MTBF / MTTR / Availability / "
+        f"ชม.เดินเครื่อง / ผลผลิต: **{period_txt}** (ฐาน Workcenter)"
+        f"{rep_period} · อายุ/มูลค่าเครื่อง: ทะเบียนเครื่องจักร ณ ปัจจุบัน"
+    )
+
+    # ---------- สถานะการทำงานล่าสุด ----------
+    if prof:
+        st.subheader("สถานะการทำงานล่าสุด", divider="green")
+        data_latest = max(dates)          # วันล่าสุดที่ทั้งฐานมีข้อมูล
+        last_end = prof["last_end"]
+        last_prod = prof["last_prod_date"]
+        gap_days = (data_latest - prof["d1"]).days
+        prod_gap = (data_latest - last_prod).days if last_prod else None
+
+        # เหตุการณ์ซ่อมที่ยังไม่ปิด ณ เวลาสแกนสุดท้ายของเครื่อง = ยังหยุดอยู่
+        mc_rows = data[data["Machine"] == mc]
+        open_repair = mc_rows[
+            (mc_rows["ประเภทงาน"].isin(["B - แจ้งซ่อม (รอช่าง)",
+                                        "BP - ช่างเข้าซ่อม"]))
+            & (mc_rows["Start"] <= last_end) & (mc_rows["End"] >= last_end)
+        ]
+
+        if not open_repair.empty:
+            st_txt, st_color, st_icon = "หยุดเครื่อง (อยู่ระหว่างซ่อม)", STATUS_COLORS[STATUS_DOWN], "🔴"
+            st_note = str(open_repair.iloc[-1]["สาเหตุ"])
+        elif gap_days == 0:
+            st_txt, st_color, st_icon = "เดินเครื่องวันล่าสุด", STATUS_COLORS[STATUS_RUN], "🟢"
+            st_note = f"มีการสแกนในวันที่ {prof['d1']:%d/%m/%Y} ซึ่งเป็นวันล่าสุดของฐานข้อมูล"
+        elif gap_days <= 3:
+            st_txt, st_color, st_icon = f"เงียบมา {gap_days} วัน", STATUS_COLORS[STATUS_IDLE], "🟡"
+            st_note = "ยังอยู่ในช่วงปกติ (วันหยุด/รอคิวงาน)"
+        else:
+            st_txt, st_color, st_icon = f"ไม่ได้เดินเครื่องมา {gap_days} วัน", STATUS_COLORS[STATUS_NODATA], "⚪"
+            st_note = "ควรตรวจสอบว่าเครื่องหยุดใช้งาน ย้ายไลน์ หรือรอซ่อม"
+
+        col_s, col_t = st.columns([1, 2])
+        with col_s:
+            # height="stretch" ใช้ได้เฉพาะแถวที่มีข้อความ/ตัวเลขเป็นหลักยึด —
+            # แถวที่มีแต่กราฟ (โหลดทีหลัง) จะทำให้ทั้งแถวหดจนกราฟหาย
+            with st.container(border=True, height="stretch"):
+                st.markdown(
+                    f"<div style='border-left:6px solid {st_color};"
+                    f"background:linear-gradient(135deg,{st_color}20 0%,{st_color}06 100%);"
+                    f"border-radius:10px;padding:14px 16px;'>"
+                    f"<div style='font-size:1.25rem;font-weight:800;'>{st_icon} {st_txt}</div>"
+                    f"<div style='font-size:0.82rem;color:#8a8a8a;margin-top:4px;'>{st_note}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    f"**กิจกรรมล่าสุด** {last_end:%d/%m/%Y %H:%M} · "
+                    f"{prof['last_kind']}"
+                    + (f" · {prof['last_reason']}"
+                       if prof["last_kind"] != "PROD - งานผลิต" else "")
+                )
+                st.caption(
+                    f"👤 {prof['last_name']} · Job {prof['last_job']}"
+                    + (f" · {prof['last_desc'][:38]}" if prof["last_desc"] else "")
+                )
+                if prod_gap is not None:
+                    st.caption(
+                        f"🏭 งานผลิตล่าสุด {last_prod:%d/%m/%Y}"
+                        + (" (วันล่าสุดของฐาน)" if prod_gap == 0
+                           else f" — {prod_gap} วันก่อน")
+                    )
+                st.caption(f"ฐานข้อมูลล่าสุดถึงวันที่ {data_latest:%d/%m/%Y}")
+
+        with col_t:
+            with st.container(border=True, height="stretch"):
+                st.markdown("**📅 ชั่วโมงเดินเครื่องรายวัน — 30 วันล่าสุด**")
+                span = pd.date_range(pd.Timestamp(data_latest) - pd.Timedelta(days=29),
+                                     pd.Timestamp(data_latest), freq="D")
+                daily = pd.DataFrame({
+                    "วันที่": span,
+                    "ชั่วโมง": [prof["net_by_day"].get(d.date(), 0.0) / 60
+                                for d in span],
+                })
+                daily["สถานะ"] = daily["ชั่วโมง"].map(
+                    lambda v: "เดินเครื่อง" if v > 0 else "ไม่มีงาน")
+                chart = (
+                    alt.Chart(daily)
+                    .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3, size=14)
+                    .encode(
+                        x=alt.X("วันที่:T", title=None,
+                                axis=alt.Axis(format="%d/%m", labelAngle=-45)),
+                        y=alt.Y("ชั่วโมง:Q", title="ชม./วัน"),
+                        color=alt.Color(
+                            "สถานะ:N",
+                            scale=alt.Scale(domain=["เดินเครื่อง", "ไม่มีงาน"],
+                                            range=[COLOR_WORK, "#3a3a3a"]),
+                            legend=None),
+                        tooltip=[alt.Tooltip("วันที่:T", format="%d/%m/%Y"),
+                                 alt.Tooltip("ชั่วโมง:Q", format=",.1f"),
+                                 alt.Tooltip("สถานะ:N")],
+                    )
+                    .properties(width="container", height=190)
+                )
+                st.altair_chart(chart, width="stretch")
+                run_days = int((daily["ชั่วโมง"] > 0).sum())
+                tot_h = daily["ชั่วโมง"].sum()
+
+                def fmt_dur(v_hours: float) -> str:
+                    """เลือกหน่วยตามขนาดค่า — บางเครื่องสแกนแค่ไม่กี่วินาที
+                    ถ้าบังคับเป็น 'ชม.' จะขึ้น 0 ทั้งที่มีงานจริง"""
+                    mins = v_hours * 60
+                    if mins < 1:
+                        return f"{mins * 60:,.0f} วินาที"
+                    if v_hours < 1:
+                        return f"{mins:,.0f} นาที"
+                    return f"{v_hours:,.0f} ชม."
+
+                st.caption(
+                    f"เดินเครื่อง **{run_days}/30 วัน** · รวม {fmt_dur(tot_h)} · "
+                    "เฉลี่ยเฉพาะวันที่เดิน "
+                    + (fmt_dur(tot_h / run_days) if run_days else "—") + "/วัน"
+                )
+
+    # ---------- ส่วนที่ 1: การใช้งานเครื่อง (ฐาน Workcenter) ----------
+    if prof:
+        st.subheader("การใช้งานเครื่อง", divider="blue")
+        st.caption(
+            f"จากฐาน Workcenter · {prof['d0']:%d/%m/%Y} → {prof['d1']:%d/%m/%Y} "
+            f"({prof['days']} วันบันทึก)"
+        )
+        col_d, col_e, col_f = st.columns(3)
+
+        with col_d:
+            # ใบนี้เตี้ยสุดของแถว — ให้ยืดตามสองใบข้างๆ ที่สูงตามเนื้อหา (เป็นหลักยึด)
+            # ห้ามใส่ stretch ทั้งแถว: กราฟโหลดช้ากว่า layout จะทำให้ทั้งแถวหดจนกราฟหาย
+            with st.container(border=True, height="stretch"):
+                st.markdown("**⏳ สัดส่วนเวลา: เดินจริง vs P / B / BP**")
+                parts = pd.DataFrame([
+                    {"ประเภท": f"เดินเครื่องจริง ({prof['net'] / 60:,.0f} ชม.)",
+                     "นาที": prof["net"], "สี": COLOR_WORK},
+                    {"ประเภท": f"เปลี่ยนอุปกรณ์ P ({prof['P_min'] / 60:,.1f} ชม. · "
+                               f"{prof['P_count']} ครั้ง)",
+                     "นาที": prof["P_min"], "สี": COLOR_P},
+                    {"ประเภท": f"แจ้งซ่อม B ({prof['B_min'] / 60:,.1f} ชม. · "
+                               f"{prof['B_count']} ครั้ง)",
+                     "นาที": prof["B_min"], "สี": COLOR_B},
+                    {"ประเภท": f"ช่างซ่อม BP ({prof['BP_min'] / 60:,.1f} ชม. · "
+                               f"{prof['BP_count']} ครั้ง)",
+                     "นาที": prof["BP_min"], "สี": COLOR_BP},
+                ])
+                parts = parts[parts["นาที"] > 0]
+                total = parts["นาที"].sum()
+                parts["สัดส่วน"] = parts["นาที"] / total * 100 if total else 0
+                donut = (
+                    alt.Chart(parts)
+                    .mark_arc(innerRadius=55, stroke="#fff", strokeWidth=2)
+                    .encode(
+                        theta=alt.Theta("นาที:Q", stack=True),
+                        color=alt.Color("ประเภท:N",
+                                        scale=alt.Scale(domain=parts["ประเภท"].tolist(),
+                                                        range=parts["สี"].tolist()),
+                                        legend=alt.Legend(orient="bottom", columns=1,
+                                                          title=None)),
+                        tooltip=[alt.Tooltip("ประเภท:N"),
+                                 alt.Tooltip("นาที:Q", format=",.0f"),
+                                 alt.Tooltip("สัดส่วน:Q", title="สัดส่วน (%)",
+                                             format=".1f")],
+                    )
+                    # 240 + legend ล่าง ~4 บรรทัด ≈ ความสูงกราฟ 300 ของสองการ์ดข้างๆ
+                    .properties(height=240)
+                )
+                st.altair_chart(donut, width="stretch")
+
+        with col_e:
+            with st.container(border=True):
+                st.markdown("**🔧 งาน P (เปลี่ยนอุปกรณ์/งาน operator) ทำอะไรบ้าง**")
+                pr = prof.get("p_reasons")
+                if pr is None or pr.empty:
+                    st.info("เครื่องนี้ไม่มีงาน P ในช่วงข้อมูล")
+                else:
+                    pr = pr.copy()
+                    # ห้ามตั้งชื่อคอลัมน์มี "." — Vega-Lite ตีความเป็น nested field
+                    # แล้วกราฟจะว่างเปล่าโดยไม่มี error
+                    pr.columns = ["สาเหตุ", "นาที", "ครั้ง"]
+                    pr["ชั่วโมง"] = pr["นาที"] / 60
+                    pr["สัดส่วน"] = pr["นาที"] / pr["นาที"].sum() * 100
+                    bar = (
+                        alt.Chart(pr)
+                        .mark_bar(color=COLOR_P, cornerRadiusTopRight=4,
+                                  cornerRadiusBottomRight=4, size=22)
+                        .encode(
+                            y=alt.Y("สาเหตุ:N", sort="-x", title=None),
+                            x=alt.X("ชั่วโมง:Q", title="ชั่วโมงรวม"),
+                            tooltip=[alt.Tooltip("สาเหตุ:N"),
+                                     alt.Tooltip("ชั่วโมง:Q", format=",.1f"),
+                                     alt.Tooltip("ครั้ง:Q"),
+                                     alt.Tooltip("สัดส่วน:Q", format=".0f")],
+                        )
+                        # สูง 300 เท่ากับโดนัทและกราฟรายเดือนข้างๆ ให้ทั้งแถวเสมอกัน
+                        .properties(height=300)
+                    )
+                    st.altair_chart(bar, width="stretch")
+                    st.caption(
+                        f"รวมงาน P: {pr['ชั่วโมง'].sum():,.1f} ชม. · "
+                        f"{int(pr['ครั้ง'].sum()):,} ครั้ง"
+                    )
+
+        with col_f:
+            with st.container(border=True):
+                st.markdown("**📈 แนวโน้มรายเดือน: ชม.เดินเครื่องสะสม + แจ้งซ่อม**")
+                months = sorted(set(prof["net_by_month"]) | set(prof["B_by_month"]))
+                # ชื่อคอลัมน์ต้องไม่มี "." — Vega-Lite ตีความเป็น nested field แล้วแท่งหาย
+                mo = pd.DataFrame([
+                    {"เดือน": m.to_timestamp(),
+                     "ชั่วโมงเดือนนี้": prof["net_by_month"].get(m, 0) / 60,
+                     "แจ้งซ่อม (ครั้ง)": prof["B_by_month"].get(m, 0)}
+                    for m in months
+                ])
+                mo["ชั่วโมงสะสม"] = mo["ชั่วโมงเดือนนี้"].cumsum()
+
+                base_c = alt.Chart(mo).encode(
+                    x=alt.X("yearmonth(เดือน):T", title=None,
+                            axis=alt.Axis(format="%b %y", labelAngle=0)))
+                bars = base_c.mark_bar(
+                    color=COLOR_WORK, size=28,
+                    cornerRadiusTopLeft=4, cornerRadiusTopRight=4, opacity=0.85,
+                ).encode(
+                    y=alt.Y("ชั่วโมงสะสม:Q", title="ชม. เดินเครื่องสะสม"),
+                    tooltip=[alt.Tooltip("yearmonth(เดือน):T", title="เดือน",
+                                         format="%m/%Y"),
+                             alt.Tooltip("ชั่วโมงสะสม:Q", title="ชม.สะสม",
+                                         format=",.0f"),
+                             alt.Tooltip("ชั่วโมงเดือนนี้:Q", title="ชม.เดือนนี้",
+                                         format=",.0f"),
+                             alt.Tooltip("แจ้งซ่อม (ครั้ง):Q")],
+                )
+                line = base_c.mark_line(
+                    color=COLOR_B, strokeWidth=2.5, interpolate="monotone",
+                    point=alt.OverlayMarkDef(color=COLOR_B, filled=True, size=80),
+                ).encode(
+                    y=alt.Y("แจ้งซ่อม (ครั้ง):Q", title="ครั้งที่แจ้งซ่อม",
+                            axis=alt.Axis(tickMinStep=1)),
+                    tooltip=[alt.Tooltip("yearmonth(เดือน):T", title="เดือน",
+                                         format="%m/%Y"),
+                             alt.Tooltip("แจ้งซ่อม (ครั้ง):Q")],
+                )
+                st.altair_chart(
+                    alt.layer(bars, line).resolve_scale(y="independent")
+                    .properties(width="container", height=300),
+                    width="stretch",
+                )
+                st.caption("แท่งเขียว = ชม.สะสม (ซ้าย) · เส้นแดง = ครั้งแจ้งซ่อม/เดือน (ขวา)")
+
+    # ---------- ส่วนที่ 2: ทะเบียนเครื่องจักร ----------
+    st.subheader("ทะเบียนเครื่องจักร", divider="gray")
+    col_reg, col_rel = st.columns([3, 2])
+
+    with col_reg:
+        with st.container(border=True, height="stretch"):
+            st.markdown("**🗂 ข้อมูลจากทะเบียน DataMaster**")
+            if reg is None:
+                st.caption("ไม่พบเครื่องนี้ในทะเบียนเครื่องจักร")
+            else:
+                facts = [
+                    ("วันที่ติดตั้ง", _reg("วันที่ติดตั้ง")),
+                    ("รุ่น", _reg("รุ่น")),
+                    ("ยี่ห้อ", _reg("ยี่ห้อ")),
+                    ("Serial No.", _reg("Serial No.")),
+                    ("รอบ PM", _reg("ความถี่ PM")),
+                    ("PM ล่าสุด", _reg("วันที่ PM ล่าสุด")),
+                    ("ระบบไฟฟ้า", f"{_reg('เฟส')} · {_reg('โวลท์')}V"),
+                    ("ผู้รับผิดชอบ", _reg("ผู้รับผิดชอบ")),
+                ]
+                fcols = st.columns(4)
+                for i, (k, v) in enumerate(facts):
+                    with fcols[i % 4]:
+                        st.caption(k)
+                        st.markdown(f"**{v}**")
+                missing = _reg("ข้อมูลที่ยังขาด (สำรวจ)", "")
+                if missing:
+                    st.caption(f":material/warning: ข้อมูลที่ยังขาดในทะเบียน: {missing}")
+
+    with col_rel:
+        with st.container(border=True, height="stretch"):
+            st.markdown("**🛡 จำนวนเหตุการณ์ (ช่วงข้อมูล Workcenter)**")
+            if not prof:
+                st.caption("ยังไม่มีบันทึกการสแกนของเครื่องนี้")
+            else:
+                e1, e2, e3 = st.columns(3)
+                e1.metric("แจ้งซ่อม B", f"{bC}", border=True,
+                          help="ครั้งที่ผู้คุมเครื่องแจ้งเครื่องเสีย")
+                e2.metric("ช่างซ่อม BP", f"{bpC}", border=True,
+                          help="ครั้งที่ช่างเข้าซ่อมจริง")
+                e3.metric("งาน P", f"{prof.get('P_count', 0):,}", border=True,
+                          help="เปลี่ยนอุปกรณ์/tooling/งาน operator")
+                st.progress(min(pct_plan / 100, 1.0))
+                st.caption(
+                    f"เดินเครื่องจริง **{pct_plan:.0f}%** ของเวลากะปกติ"
+                    + (" — ส่วนที่เกิน 100% คือช่วง OT" if pct_plan > 100 else "")
+                )
+
+    # ---------- ส่วนที่ 3: ประวัติการซ่อมย้อนหลัง ----------
+    st.subheader("ประวัติการซ่อมย้อนหลัง 2020–2026", divider="orange")
+    st.caption(
+        "📌 นับเฉพาะ**งานซ่อมเครื่องจักร** (ฐานรายงานซ่อมบำรุง_เครื่อง) — "
+        "ไม่รวมหมวดซ่อมสร้าง/ดัดแปลง/อื่นๆ ที่ทำกับพื้นที่รอบเครื่อง "
+        "จึงอาจต่างจากหน้า Dashboard ซ่อมบำรุง 6 หมวดที่รวมทุกหมวด"
+    )
+    if rep.empty:
+        st.caption(f"ไม่พบใบงานซ่อมของเครื่อง {mc} ในฐานข้อมูล 2020–2026")
+    else:
+        col_g, col_h, col_i = st.columns(3)
+
+        with col_g:
+            with st.container(border=True, height="stretch"):
+                st.markdown("**🪙 มูลค่าซ่อมเครื่องสะสม**")
+                cost = rep["ค่าใช้จ่ายรวม"].sum()
+                n = len(rep)
+                mins = rep["เวลาซ่อม (นาที)"].sum()
+                st.metric("ค่าซ่อมสะสม", f"฿{cost:,.0f}", border=True)
+                st.caption(
+                    f"ใบงานซ่อม {n:,} ใบ · เฉลี่ย ฿{cost / n:,.0f}/ใบ · "
+                    f"เวลาซ่อมรวม {mins / 60:,.0f} ชม."
+                )
+                pm = int((rep["สถานะการซ่อม (PM/BM)"] == "PM").sum())
+                bm = int((rep["สถานะการซ่อม (PM/BM)"] == "BM").sum())
+                m1, m2 = st.columns(2)
+                m1.metric("PM (ป้องกัน)", f"{pm} ใบ", border=True)
+                m2.metric("BM (เสียแล้วซ่อม)", f"{bm} ใบ", border=True)
+                if pm + bm:
+                    st.caption(
+                        f"สัดส่วนป้องกัน : เสียแล้วซ่อม = "
+                        f"**{pm / (pm + bm) * 100:.0f} : {bm / (pm + bm) * 100:.0f}** "
+                        "— ยิ่งฝั่ง PM สูงยิ่งดี"
+                    )
+                yrs = rep["ปี"].astype(int)
+                st.caption(f"ช่วงข้อมูล: {yrs.min()} – {yrs.max()}")
+
+        with col_h:
+            with st.container(border=True, height="stretch"):
+                st.markdown("**⚡ อะไรเสีย — Electric vs Mechanical**")
+                by_type = (
+                    rep.groupby("ประเภทงาน")
+                    .agg(ครั้ง=("เลขที่แจ้งซ่อม", "count"),
+                         ค่าใช้จ่าย=("ค่าใช้จ่ายรวม", "sum"),
+                         นาที=("เวลาซ่อม (นาที)", "sum"))
+                    .reset_index().sort_values("ครั้ง", ascending=False)
+                )
+                type_colors = {"Electric": "#eda100", "Mechanical": "#2a78d6",
+                               "ไม่ระบุ": "#898781"}
+
+                # ตัวเลขใหญ่อ่านปราดเดียว: จำนวนครั้งของแต่ละประเภท
+                tcols = st.columns(len(by_type))
+                total_n = by_type["ครั้ง"].sum()
+                for tcol, (_, r) in zip(tcols, by_type.iterrows()):
+                    tcol.metric(
+                        str(r["ประเภทงาน"]),
+                        f"{r['ครั้ง']:,} ครั้ง", border=True,
+                        help=f"{r['ครั้ง'] / total_n * 100:.0f}% ของใบงานซ่อมทั้งหมด",
+                    )
+
+                # กราฟสัดส่วน Electric vs Mechanical ใน 3 มิติ (ครั้ง/ค่าใช้จ่าย/ชั่วโมง)
+                # หมายเหตุ: ห้ามใช้ row-facet ในการ์ดคอลัมน์ — Vega ไม่ยอมหดตาม
+                # ความกว้างคอนเทนเนอร์ ทำให้กราฟล้นไปทับการ์ดข้างๆ
+                melted = by_type.copy()
+                melted["ชั่วโมงซ่อม"] = (melted["นาที"] / 60).round(1)
+                melted["ค่าใช้จ่าย (พันบาท)"] = (melted["ค่าใช้จ่าย"] / 1e3).round(1)
+                plot_t = melted.melt(
+                    id_vars="ประเภทงาน",
+                    value_vars=["ครั้ง", "ค่าใช้จ่าย (พันบาท)", "ชั่วโมงซ่อม"],
+                    var_name="มิติ", value_name="ค่า",
+                )
+                chart = (
+                    alt.Chart(plot_t)
+                    .mark_bar(cornerRadius=3)
+                    .encode(
+                        y=alt.Y("มิติ:N", title=None,
+                                scale=alt.Scale(paddingInner=0.45),
+                                sort=["ครั้ง", "ค่าใช้จ่าย (พันบาท)", "ชั่วโมงซ่อม"]),
+                        x=alt.X("ค่า:Q", stack="normalize", title="สัดส่วน",
+                                axis=alt.Axis(format=".0%")),
+                        order=alt.Order("ประเภทงาน:N"),
+                        color=alt.Color(
+                            "ประเภทงาน:N",
+                            scale=alt.Scale(domain=list(type_colors),
+                                            range=list(type_colors.values())),
+                            legend=alt.Legend(orient="bottom", title=None)),
+                        tooltip=[alt.Tooltip("ประเภทงาน:N"),
+                                 alt.Tooltip("มิติ:N"),
+                                 alt.Tooltip("ค่า:Q", format=",.1f")],
+                    )
+                    .properties(width="container", height=170)
+                )
+                st.altair_chart(chart, width="stretch")
+                for _, r in by_type.iterrows():
+                    st.caption(
+                        f"**{r['ประเภทงาน']}**: {r['ครั้ง']:,} ครั้ง · "
+                        f"฿{r['ค่าใช้จ่าย']:,.0f} · {r['นาที'] / 60:,.0f} ชม."
+                    )
+
+        with col_i:
+            with st.container(border=True, height="stretch"):
+                st.markdown("**🧩 เสียที่ Module ไหน (Top 8)**")
+                if "Module" not in rep.columns:
+                    st.info("ฐานใบงานซ่อมไม่มีคอลัมน์ Module")
+                else:
+                    by_mod = (
+                        rep.groupby(["Module", "ชื่อโมดูล"])
+                        .agg(ครั้ง=("เลขที่แจ้งซ่อม", "count"),
+                             ค่าใช้จ่าย=("ค่าใช้จ่ายรวม", "sum"),
+                             นาที=("เวลาซ่อม (นาที)", "sum"))
+                        .reset_index().sort_values("ครั้ง", ascending=False).head(8)
+                    )
+                    by_mod["โมดูล"] = (by_mod["Module"] + " " +
+                                       by_mod["ชื่อโมดูล"].str.slice(0, 22))
+                    chart = (
+                        alt.Chart(by_mod)
+                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
+                                  size=20)
+                        .encode(
+                            y=alt.Y("โมดูล:N", sort="-x", title=None),
+                            x=alt.X("ครั้ง:Q", title="จำนวนครั้ง"),
+                            color=alt.Color("โมดูล:N", legend=None,
+                                            scale=alt.Scale(range=MODULE_COLORS)),
+                            tooltip=[alt.Tooltip("Module:N"),
+                                     alt.Tooltip("ชื่อโมดูล:N", title="ชื่อ"),
+                                     alt.Tooltip("ครั้ง:Q"),
+                                     alt.Tooltip("ค่าใช้จ่าย:Q", format=",.0f"),
+                                     alt.Tooltip("นาที:Q", format=",.0f")],
+                        )
+                        .properties(width="container",
+                                    height=max(180, 30 * len(by_mod)))
+                    )
+                    st.altair_chart(chart, width="stretch")
+                    top = by_mod.iloc[0]
+                    st.caption(
+                        f"เสียบ่อยสุด: **{top['Module']} {top['ชื่อโมดูล']}** "
+                        f"{top['ครั้ง']} ครั้ง · ฿{top['ค่าใช้จ่าย']:,.0f} "
+                        "— ควรเน้น PM ที่โมดูลนี้"
+                    )
+
+        # ---- การ์ดเต็มแถว: เทียบค่าซ่อมสะสมกับราคาเครื่อง (ทุนตามบัญชี) ----
+        with st.container(border=True):
+            st.markdown("**⚖️ ค่าซ่อมสะสม เทียบราคาเครื่อง (ทุนตามบัญชี)**")
+            if not asset_cost:
+                st.caption("ทะเบียนเครื่องจักรยังไม่มีราคาทุนของเครื่องนี้ — "
+                           "เติมคอลัมน์ 'ราคาทุนตามบัญชี (บาท)' ในทะเบียนเครื่องจักร")
+            else:
+                ratio = cost_total / asset_cost * 100
+                if ratio < 25:
+                    r_icon, r_note = "🟢", "ยังต่ำ — ซ่อมบำรุงคุ้มค่า"
+                elif ratio < 50:
+                    r_icon, r_note = "🟡", "เริ่มสูง — ควรติดตามแนวโน้มค่าซ่อม"
+                else:
+                    r_icon, r_note = ("🔴", "สูงมาก — ควรประเมินความคุ้มค่า "
+                                            "ซ่อมต่อ vs เปลี่ยนเครื่อง")
+
+                c_num, c_chart = st.columns([1, 2], vertical_alignment="center")
+                with c_num:
+                    st.metric("ราคาเครื่อง (บัญชี)", f"฿{asset_cost:,.0f}",
+                              border=True)
+                    st.metric("ค่าซ่อมเครื่องสะสม 2020–26", f"฿{cost_total:,.0f}",
+                              border=True,
+                              help="เฉพาะงานซ่อมเครื่องจักร ไม่รวมหมวดซ่อมสร้าง")
+                    st.metric("สัดส่วนค่าซ่อม/ราคาเครื่อง", f"{ratio:.1f}%",
+                              border=True,
+                              help="เกณฑ์: <25% ต่ำ · 25–50% เฝ้าระวัง · >50% สูง")
+                with c_chart:
+                    cmp_df = pd.DataFrame([
+                        {"รายการ": "ราคาเครื่อง (บัญชี)", "บาท": asset_cost,
+                         "สี": "#2a78d6"},
+                        {"รายการ": "ค่าซ่อมสะสม", "บาท": cost_total,
+                         "สี": COLOR_BP},
+                    ])
+                    cmp_chart = (
+                        alt.Chart(cmp_df)
+                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4,
+                                  size=34)
+                        .encode(
+                            y=alt.Y("รายการ:N", title=None,
+                                    sort=["ราคาเครื่อง (บัญชี)", "ค่าซ่อมสะสม"]),
+                            x=alt.X("บาท:Q", title="บาท",
+                                    axis=alt.Axis(format="~s")),
+                            color=alt.Color("รายการ:N", legend=None,
+                                            scale=alt.Scale(
+                                                domain=cmp_df["รายการ"].tolist(),
+                                                range=cmp_df["สี"].tolist())),
+                            tooltip=[alt.Tooltip("รายการ:N"),
+                                     alt.Tooltip("บาท:Q", format=",.0f")],
+                        )
+                        .properties(width="container", height=130)
+                    )
+                    st.altair_chart(cmp_chart, width="stretch")
+                    st.markdown(
+                        f"{r_icon} ค่าซ่อมสะสมคิดเป็น **{ratio:.1f}%** "
+                        f"ของราคาเครื่อง — {r_note}"
+                        + (f" · เหลือวงเงินซ่อมอีก ฿{asset_cost - cost_total:,.0f} "
+                           "จะเท่าราคาเครื่อง 1 ตัว" if ratio < 100 else "")
+                    )
+
+        with st.expander(f"📋 ใบงานซ่อมทั้งหมดของ {mc} ({len(rep):,} ใบ)"):
+            show_cols = [c for c in [
+                "วันที่แจ้งซ่อม", "เลขที่แจ้งซ่อม", "สถานะการซ่อม (PM/BM)",
+                "ประเภทงาน", "Module", "ชื่อโมดูล", "ปัญหา", "วิเคราะห์สาเหตุ",
+                "การแก้ไข", "เวลาซ่อม (นาที)", "ค่าใช้จ่ายรวม",
+            ] if c in rep.columns]
+            show_rep = rep[show_cols].sort_values("วันที่แจ้งซ่อม", ascending=False)
+            st.dataframe(show_rep, width="stretch", hide_index=True, height=400)
+
+    st.caption(
+        "🔗 หน้านี้เชื่อม 5 ฐานข้อมูลด้วยรหัสเครื่อง: "
+        "**ทะเบียนเครื่องจักร** (ข้อมูลทั่วไป/รอบ PM) · "
+        "**Workcenter** (เวลาเดินจริง P/B/BP รายเดือน) · "
+        "**MTBF-MTTR** (เหตุการณ์ซ่อม) · **OEE** (เวลาทำงานจริง) · "
+        "**ใบงานซ่อม 2020–2026** (ค่าใช้จ่าย/Module/Electric-Mechanical)"
+    )
+
+
+# --- 6) ผลงาน ---
 with tab_perf:
     work = day_df[~day_df["IsDowntime"]]
     st.subheader(f"📊 ผลงานประจำวัน — {sel_date:%d/%m/%Y}")
@@ -1197,7 +2245,7 @@ with tab_perf:
             )
             chart = (
                 alt.Chart(by_emp)
-                .mark_bar(color="#1baf7a", cornerRadiusTopRight=4,
+                .mark_bar(color=COLOR_WORK, cornerRadiusTopRight=4,
                           cornerRadiusBottomRight=4, size=18)
                 .encode(
                     y=alt.Y("Name:N", sort="-x", title=None),
@@ -1225,7 +2273,7 @@ with tab_perf:
         "% ใช้งาน = เวลาเดินเครื่อง ÷ ช่วงตั้งแต่สแกนแรกถึงสแกนสุดท้ายของเครื่องนั้น"
     )
 
-# --- 6) ข้อมูลดิบ ---
+# --- 7) ข้อมูลดิบ ---
 with tab_raw:
     st.subheader("📋 ธุรกรรมทั้งหมดของวันที่เลือก")
     display = day_df.drop(columns=["Date", "IsDowntime", "EndDisplay"], errors="ignore").copy()
