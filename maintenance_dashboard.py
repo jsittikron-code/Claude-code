@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import data_paths
 
 st.set_page_config(page_title="Dashboard งานซ่อมบำรุง 6 หมวด", page_icon="🛠️", layout="wide")
 
@@ -16,7 +17,8 @@ st.set_page_config(page_title="Dashboard งานซ่อมบำรุง 6 
 # ใช้บัญชีชุดเดียวกับแดชบอร์ดตัวอื่นในโฟลเดอร์นี้ ดูโมดูล auth.py
 auth.check_login("Dashboard งานซ่อมบำรุง 6 หมวด")
 
-DATA_DIR = r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD\ฝ่ายซ่อมบำรุงรักษา\ทดสอบแยกข้อมูลย้อนหลัง"
+# หาโฟลเดอร์ใบแจ้งซ่อมเอง ไม่ฝังชื่อโฟลเดอร์ไว้ในโค้ด — ย้ายโฟลเดอร์แล้วยังหาเจอ
+DATA_DIR = data_paths.repair_dir()
 FILES = {
     "เครื่องจักร": "รายงานซ่อมบำรุง_เครื่อง_2020-2026.xlsx",
     "ซ่อมสร้าง": "รายงานซ่อมบำรุง_ซ่อมสร้าง_2020-2026.xlsx",

@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import data_paths
 
 # ---------------------------------------------------------------------------
 # แหล่งข้อมูล + ค่าคงที่
@@ -22,7 +23,8 @@ import auth
 DEPT_DIR = r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD\ฝ่ายซ่อมบำรุงรักษา"
 MTBF_PATH = os.path.join(DEPT_DIR, r"2.เรื่องMTBF-MTTR\รายละเอียด\MTBF-MTTR_ฐานข้อมูลหลัก_2569.xlsx")
 OEE_PATH = os.path.join(DEPT_DIR, r"3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx")
-MT_DIR = os.path.join(DEPT_DIR, "ทดสอบแยกข้อมูลย้อนหลัง")
+# หาโฟลเดอร์ใบแจ้งซ่อมเอง ไม่ฝังชื่อโฟลเดอร์ไว้ในโค้ด (ดู data_paths.py)
+MT_DIR = data_paths.repair_dir()
 MT_FILES = {
     "เครื่องจักร": "รายงานซ่อมบำรุง_เครื่อง_2020-2026.xlsx",
     "ซ่อมสร้าง": "รายงานซ่อมบำรุง_ซ่อมสร้าง_2020-2026.xlsx",

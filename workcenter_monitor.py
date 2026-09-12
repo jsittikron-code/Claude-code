@@ -25,6 +25,8 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import data_paths
+import mos_loader
 
 # ---------------------------------------------------------------------------
 # ตั้งค่าหน้าเพจ
@@ -67,10 +69,9 @@ REGISTRY_PATH = (
     r"\ฝ่ายซ่อมบำรุงรักษา\5.งานทะเบียนเครื่องจักร\ทะเบียนเครื่องจักร_DataMaster_2569.xlsx"
 )
 # ใบงานซ่อมย้อนหลัง 2020-2026 — ค่าใช้จ่าย PM/BM Electric/Mechanical Module
-REPAIR_PATH = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา\ทดสอบแยกข้อมูลย้อนหลัง\รายงานซ่อมบำรุง_เครื่อง_2020-2026.xlsx"
-)
+# หาโฟลเดอร์เอง ไม่ฝังชื่อโฟลเดอร์ไว้ในโค้ด (ดู data_paths.py)
+REPAIR_PATH = os.path.join(data_paths.repair_dir(),
+                           "รายงานซ่อมบำรุง_เครื่อง_2020-2026.xlsx")
 
 # ชั่วโมงงานมาตรฐานต่อวัน ใช้เป็นตัวหารของ % เดินเครื่อง (กะเดียว 07:00-16:00)
 PLAN_MINUTES_PER_DAY = 480
@@ -173,6 +174,9 @@ def folder_signature() -> tuple:
     """ลายเซ็นแหล่งข้อมูล = (ชื่อไฟล์, เวลาแก้ไข) ของไฟล์ raw ทุกไฟล์ + ฐาน MTBF/OEE
     — ไฟล์ไหนถูก sync/อัปเดต ลายเซ็นเปลี่ยน แอปจะโหลดใหม่และรีเฟรชเอง"""
     files = sorted(glob.glob(os.path.join(DATA_DIR, FILE_PATTERN)))
+    # ไฟล์ดิบจาก MOS ในโฟลเดอร์ raw — ต้องอยู่ในลายเซ็นด้วย ไม่งั้นวางไฟล์ใหม่
+    # แล้วแอปจะยังใช้ cache เก่า เพราะไฟล์ master ไม่ได้ถูกแก้แล้ว
+    files += sorted(glob.glob(os.path.join(mos_loader.RAW_DIR, mos_loader.RAW_GLOB)))
     files += [p for p in (MASTER_PATH, MTBF_PATH, OEE_PATH, REGISTRY_PATH, REPAIR_PATH)
               if os.path.exists(p)]
     return (("logic", DATA_LOGIC_VERSION),) + tuple(
@@ -215,7 +219,10 @@ def load_data(sig: tuple) -> pd.DataFrame:
     # --- แหล่งที่ 1: ฐานข้อมูลหลัก (ชีต Data ~3 แสนแถว ใช้ calamine อ่านในสิบกว่าวินาที) ---
     if os.path.exists(MASTER_PATH):
         try:
-            df = pd.read_excel(MASTER_PATH, sheet_name="Data", engine="calamine")
+            # อ่านผ่าน mos_loader — รวมไฟล์ดิบจาก MOS ในโฟลเดอร์ raw เข้ากับ
+            # ฐานประวัติจากไฟล์ master ตัดแถวซ้ำ แล้วคืนตารางหน้าตาเดียวกับ
+            # ชีต Data เดิมทุกประการ (ตรวจแล้วตรงกันแถวต่อแถว 414,211 แถว)
+            df = mos_loader.load_workcenter()
             need = ["Machine", "พนักงาน", "Job", "หมวดJob", "Qty", "Start", "End"]
             if all(c in df.columns for c in need):
                 df = df.rename(columns={

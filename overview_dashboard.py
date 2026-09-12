@@ -27,6 +27,8 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import data_paths
+import mos_loader
 
 # ===========================================================================
 # ค่าคงที่ร่วม — เส้นทางไฟล์ฐานข้อมูลของฝ่าย (ชุดเดียวกับแอปต้นทาง)
@@ -89,13 +91,16 @@ STATUS_ORDER = [STATUS_RUN, STATUS_IDLE, STATUS_DOWN, STATUS_NODATA]
 
 
 def wc_signature() -> tuple:
-    return (_mtime(WC_MASTER),)
+    # ต้องรวมลายเซ็นโฟลเดอร์ raw ด้วย เพราะหลังย้ายมาใช้ไฟล์ดิบจาก MOS แล้ว
+    # ไฟล์ master จะไม่ถูกแก้อีก ถ้าดูแต่ master แอปจะไม่รู้ว่ามีข้อมูลใหม่
+    return (_mtime(WC_MASTER), tuple(tuple(x) for x in mos_loader.signature()))
 
 
 @st.cache_data(ttl="30m", max_entries=2, show_spinner="กำลังอ่านฐานข้อมูล Workcenter...")
 def load_workcenter(sig):
     """ชีต Data ของฐานหลัก → (ธุรกรรมของวันล่าสุด, รายชื่อเครื่องช่วง 30 วัน, วันล่าสุด)"""
-    df = _read_sheet(WC_MASTER, "Data")
+    # อ่านผ่าน mos_loader — ตรรกะเดียวกับ workcenter_monitor.py
+    df = mos_loader.load_workcenter()
     need = ["Machine", "พนักงาน", "Job", "หมวดJob", "Qty", "Start", "End"]
     missing = [c for c in need if c not in df.columns]
     if missing:
@@ -153,7 +158,8 @@ def machine_status(day_df, all_machines, ref_time, idle_min) -> pd.DataFrame:
 # ===========================================================================
 # ส่วนที่ 2: ใบงานซ่อม 6 หมวด (ตรรกะจาก maintenance_dashboard.py)
 # ===========================================================================
-MT_DIR = os.path.join(DEPT_DIR, "ทดสอบแยกข้อมูลย้อนหลัง")
+# หาโฟลเดอร์ใบแจ้งซ่อมเอง ไม่ฝังชื่อโฟลเดอร์ไว้ในโค้ด (ดู data_paths.py)
+MT_DIR = data_paths.repair_dir()
 MT_FILES = {
     "เครื่องจักร": "รายงานซ่อมบำรุง_เครื่อง_2020-2026.xlsx",
     "ซ่อมสร้าง": "รายงานซ่อมบำรุง_ซ่อมสร้าง_2020-2026.xlsx",
