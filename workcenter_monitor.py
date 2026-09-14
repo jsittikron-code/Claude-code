@@ -1,8 +1,8 @@
 """
 Workcenter Monitoring — ศูนย์ปฏิบัติการเครื่องจักร (Real-time)
 --------------------------------------------------------------
-อ่านไฟล์ log การสแกนงานรายเครื่อง (raw_*.xls รูปแบบ r-jobtran-mc) จากโฟลเดอร์
-"9.workcenter operation" บน OneDrive แล้วแสดงผล 5 มุมมอง:
+อ่านข้อมูลการสแกนงานรายเครื่องจากไฟล์ parquet ที่ ETL ของฝ่ายสร้างให้
+(00_ETL_Pipeline/parquet/workcenter_data.parquet) แล้วแสดงผล 5 มุมมอง:
   1. สถานะสด        — บอร์ดสถานะรายเครื่อง (ทำงาน / ว่าง / หยุดเครื่อง) อัปเดตอัตโนมัติ
   2. Timeline        — Gantt กิจกรรมรายเครื่องตลอดวัน แยกสีงานปกติ/สาเหตุหยุด
   3. การหยุดเครื่อง   — Pareto สาเหตุ + เครื่องที่เสียเวลามากสุด + รายการเหตุการณ์
@@ -15,7 +15,6 @@ Workcenter Monitoring — ศูนย์ปฏิบัติการเคร
 รันด้วย:  streamlit run workcenter_monitor.py
 """
 
-import glob
 import io
 import os
 from datetime import datetime, timedelta
@@ -41,14 +40,13 @@ st.set_page_config(
 # ใช้บัญชีชุดเดียวกับแดชบอร์ดตัวอื่นในโฟลเดอร์นี้ ดูโมดูล auth.py
 auth.check_login("Workcenter Monitoring — ศูนย์ปฏิบัติการเครื่องจักร")
 
-# โฟลเดอร์ข้อมูลหลักบน OneDrive — วางไฟล์ raw ใหม่ที่นี่ หน้าจอจะอัปเดตเอง
+# โฟลเดอร์ฐานข้อมูลเดิมบน OneDrive (ไฟล์ดิบวางที่ 00_ข้อมูลดิบ_MOS แทนแล้ว)
 DATA_DIR = (
     r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
     r"\ฝ่ายซ่อมบำรุงรักษา\9.workcenter operation"
 )
 
-# ฐานข้อมูลหลัก Workcenter (ชีต Data รวมธุรกรรมทุกวันตั้งแต่ต้นปี) — แหล่งข้อมูลอันดับ 1
-# ถ้าไฟล์นี้ไม่มี/อ่านไม่ได้ ค่อยถอยไปอ่านไฟล์ raw_*.xls รายวันแบบเดิม
+# ไฟล์ฐานเดิม เก็บไว้เพื่อดูเวลาแก้ไขเท่านั้น ข้อมูลจริงอ่านจาก parquet ที่ ETL สร้าง
 MASTER_PATH = os.path.join(DATA_DIR, "Workcenter_ฐานข้อมูลหลัก_2569.xlsx")
 
 # ฐานข้อมูลหลักของฝ่ายซ่อมบำรุง — แอปเฝ้าดูไฟล์พวกนี้ด้วย อัปเดตเมื่อไรรีเฟรชเอง
@@ -86,8 +84,6 @@ MTBF_SHEETS = {
     "Maintenance_BP00000001": "Maintenance",
     "P000000001_รายละเอียด": "Planned stop",
 }
-
-# คอลัมน์ที่ต้องมี (แถวหัวตารางอยู่บรรทัดที่ 3 ของชีต Report2)
 
 # กลุ่มเครื่องจักรตามรหัสนำหน้า (ชุดเดียวกับ monitor.py)
 GROUP_NAMES = {
