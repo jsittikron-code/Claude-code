@@ -13,7 +13,20 @@
 """
 
 import os
+import subprocess
 import sys
+import time
+
+
+def _excel_pids() -> set:
+    """หมายเลขโปรเซส EXCEL.EXE ที่กำลังรันอยู่ตอนนี้"""
+    try:
+        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq EXCEL.EXE", "/FO", "CSV", "/NH"],
+                           capture_output=True, text=True, timeout=20)
+        return {int(ln.split('","')[1]) for ln in r.stdout.splitlines()
+                if ln.startswith('"EXCEL.EXE"')}
+    except Exception:
+        return set()
 
 DEPT_DIR = (
     r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
@@ -40,7 +53,9 @@ def recalc(paths) -> bool:
         print("  หรือเปิดไฟล์เรื่อง 2 และ 3 ด้วย Excel แล้วกด Save เองครั้งเดียว")
         return False
 
+    before = _excel_pids()
     xl = win32.DispatchEx("Excel.Application")
+    ours = _excel_pids() - before          # โปรเซส Excel ที่เราเป็นคนเปิด
     xl.Visible = False
     xl.DisplayAlerts = False
     xl.AskToUpdateLinks = False
@@ -50,17 +65,41 @@ def recalc(paths) -> bool:
             if not os.path.exists(p):
                 print(f"  ข้าม ไม่พบไฟล์: {os.path.basename(p)}")
                 continue
-            try:
-                wb = xl.Workbooks.Open(p, UpdateLinks=0, ReadOnly=False)
-                xl.CalculateFullRebuild()
-                wb.Save()
-                wb.Close(False)
-                print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
-            except Exception as e:
-                ok = False
-                print(f"  ผิดพลาด {os.path.basename(p)}: {e}")
+            # Excel ปฏิเสธคำสั่งได้ถ้ามันกำลังยุ่ง หรือไฟล์เพิ่งถูกอ่านค้างอยู่
+            # (com_error 'Call was rejected by callee') รอแล้วลองใหม่มักผ่าน
+            for attempt in range(1, 4):
+                try:
+                    wb = xl.Workbooks.Open(p, UpdateLinks=0, ReadOnly=False)
+                    xl.CalculateFullRebuild()
+                    wb.Save()
+                    wb.Close(False)
+                    print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
+                    break
+                except Exception as e:
+                    if attempt == 3:
+                        ok = False
+                        print(f"  ผิดพลาด {os.path.basename(p)}: {e}")
+                    else:
+                        print(f"  ลองใหม่ครั้งที่ {attempt + 1} ({os.path.basename(p)})")
+                        time.sleep(5)
     finally:
-        xl.Quit()
+        # ต้องปิด Excel ให้ได้เสมอ ถ้าเหลือค้างไว้ มันจะถือไฟล์แล้วทำให้
+        # รอบถัดไปสั่งงานไม่ได้ และแดชบอร์ดอ่านช่องสูตรได้เป็นค่าว่าง
+        # (เจอจริงเมื่อ 2026-09-14 มี Excel ค้างจากรอบก่อนแล้วรอบใหม่ล้มทั้งหมด)
+        try:
+            xl.Quit()
+        except Exception:
+            pass
+        del xl
+        time.sleep(2)
+        stuck = ours & _excel_pids()
+        for pid in stuck:
+            try:
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                               capture_output=True, timeout=20)
+                print(f"  ปิด Excel ที่ค้างอยู่ (pid {pid})")
+            except Exception:
+                pass
     return ok
 
 
@@ -133,11 +172,16 @@ def export_parquet() -> bool:
 
 def main() -> int:
     print("สั่ง Excel คำนวณสูตรและเซฟ")
-    if not recalc(TARGETS):
-        return 1
-    ok = verify()
+    # ถึง recalc จะล้ม ก็ยังต้องตรวจและ export ต่อ เพราะบางไฟล์อาจสำเร็จไปแล้ว
+    # และ parquet ที่ได้ยังดีกว่าไม่มีเลย
+    ok_recalc = recalc(TARGETS)
+    ok_verify = verify()
     export_parquet()
-    return 0 if ok else 1
+    if not ok_recalc:
+        print("\n  สั่ง Excel ไม่สำเร็จบางไฟล์")
+        print("  ถ้าตัวเลขบนแดชบอร์ดหาย ให้เปิดไฟล์เรื่อง 2 และ 3 ด้วย Excel")
+        print("  แล้วกด Save 1 ครั้ง หรือรัน  python etl_recalc_excel.py  ใหม่อีกรอบ")
+    return 0 if (ok_recalc and ok_verify) else 1
 
 
 if __name__ == "__main__":
