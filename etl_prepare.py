@@ -40,6 +40,18 @@ STAMP = re.compile(r"_(\d{2})(\d{2})(\d{2})(\d{6})")   # _YYMMDDhhmmss
 # ถ้าไฟล์ของวันนี้ถูกใช้ไปแล้ว สคริปต์จะถอยไปหยิบไฟล์เก่ามาใช้แทนโดยไม่มีใครรู้
 MAX_AGE_DAYS = 1
 
+# รหัสผลลัพธ์พิเศษ: ไม่มีไฟล์ให้ย้าย แต่ไม่ถือว่าผิดพลาด
+#
+# ทำไมต้องแยกรหัสนี้ออกมา
+#   สคริปต์นี้ "ย้าย" ไฟล์ออกจาก Downloads พอย้ายเสร็จ Downloads ก็ว่าง
+#   ถ้ารอบถัดไปถือว่า "ไม่มีไฟล์" เป็นความผิดพลาดแล้วหยุดทั้งกระบวนการ
+#   ไฟล์ที่ย้ายไปแล้วแต่ยังไม่ได้โหลดเข้าฐานจะค้างอยู่ตลอดไป กดปุ่มกี่ครั้งก็ไม่มีอะไรเกิดขึ้น
+#   (เกิดขึ้นจริง 14-15 ก.ย. 2569 ข้อมูลค้างสองวันโดยที่หน้าจอไม่บอกอะไร)
+#
+#   ตัวเรียกต้องเดินต่อไปขั้นถัดไปเสมอเมื่อได้รหัสนี้ เพราะ ETL ตัดแถวซ้ำอยู่แล้ว
+#   รันซ้ำกับข้อมูลเดิมไม่เสียหาย แต่ไม่รันเลยคือข้อมูลหาย
+NOTHING_TO_MOVE = 2
+
 
 def file_date(path: str):
     """วันที่จากชื่อไฟล์ → (date ค.ศ., ชื่อโฟลเดอร์ พ.ศ.) หรือ None"""
@@ -72,7 +84,7 @@ def main() -> int:
     if not by_day:
         print("  ไม่พบไฟล์ export จาก MOS ในโฟลเดอร์ Downloads เลย")
         print(f"  ดึง export จาก MOS มาไว้ที่ {DOWNLOADS} ก่อน")
-        return 1
+        return NOTHING_TO_MOVE
 
     today = dt.date.today()
     newest_day = max(by_day)
@@ -83,19 +95,19 @@ def main() -> int:
     print(f"  ไฟล์ใหม่ที่สุดใน Downloads เป็นของวันที่ {folder} (อายุ {age} วัน)")
 
     if age > MAX_AGE_DAYS:
-        print(f"\n  หยุด — ไฟล์เก่าเกิน {MAX_AGE_DAYS} วัน")
-        print("  แปลว่ายังไม่ได้ดึง export ของวันนี้ ให้ดึงจาก MOS ก่อนแล้วรันใหม่")
-        return 1
+        print(f"\n  ไม่มีไฟล์ใหม่ให้ย้าย (ไฟล์ใน Downloads เก่าเกิน {MAX_AGE_DAYS} วัน)")
+        print("  ถ้าเพิ่งดึง export มา ให้ตรวจว่าลงในโฟลเดอร์ Downloads จริงไหม")
+        return NOTHING_TO_MOVE
 
     missing = [k for k in PATTERNS if k not in group]
     if "ใบงานรายเครื่อง" in missing:
-        print("\n  หยุด — ไม่มีไฟล์ใบงานรายเครื่อง (r-jobtran-mc) ของวันนี้")
-        return 1
+        print("\n  ไม่มีไฟล์ใบงานรายเครื่อง (r-jobtran-mc) ของวันนี้ใน Downloads")
+        return NOTHING_TO_MOVE
     if missing:
-        print(f"\n  หยุด — วันที่ {folder} มีแต่ใบงาน ขาดไฟล์ {', '.join(missing)}")
-        print("  ต้องมีครบทั้งสองไฟล์และเป็นของวันเดียวกัน จึงจะอัปเดตได้")
+        print(f"\n  วันที่ {folder} มีแต่ใบงาน ขาดไฟล์ {', '.join(missing)}")
+        print("  ต้องมีครบทั้งสองไฟล์และเป็นของวันเดียวกัน จึงจะย้ายได้")
         print("  ดึง export ที่ขาดจาก MOS ก่อนแล้วรันใหม่")
-        return 1
+        return NOTHING_TO_MOVE
 
     dest = os.path.join(RAW_ROOT, folder)
 
@@ -106,8 +118,7 @@ def main() -> int:
         for k in PATTERNS)
     if already:
         print(f"\n  ไฟล์ชุดนี้อยู่ในโฟลเดอร์ {folder} แล้ว ไม่ต้องย้ายซ้ำ")
-        print("  ถ้าต้องการข้อมูลใหม่กว่านี้ ให้ดึง export รอบใหม่จาก MOS ก่อน")
-        return 0
+        return NOTHING_TO_MOVE
 
     os.makedirs(dest, exist_ok=True)
     print(f"  โฟลเดอร์ปลายทาง: {folder}\n")

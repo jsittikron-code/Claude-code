@@ -70,7 +70,20 @@ def recalc(paths) -> bool:
             for attempt in range(1, 4):
                 try:
                     wb = xl.Workbooks.Open(p, UpdateLinks=0, ReadOnly=False)
+                    xl.Calculation = -4105          # xlCalculationAutomatic
                     xl.CalculateFullRebuild()
+                    # ต้องรอให้ Excel คำนวณเสร็จก่อนเซฟ
+                    #
+                    # CalculateFullRebuild() สั่งแล้วคืนค่าทันที ไม่ได้รอให้เสร็จ
+                    # ถ้าเซฟเลย ค่าที่ฝังลงไฟล์จะยังว่าง แล้ว pandas อ่านช่องสูตร
+                    # ได้เป็นค่าว่าง ทั้งที่เปิดดูใน Excel เห็นตัวเลขปกติ
+                    # (เจอจริง 15 ก.ย. 2569 คอลัมน์ หมวดหมู่เครื่อง ว่างทั้ง 49 แถว)
+                    #
+                    # CalculationState: 0 = คำนวณเสร็จ, 1 = กำลังคำนวณ, 2 = รอคิว
+                    for _ in range(120):            # รอไม่เกิน 60 วินาที
+                        if xl.CalculationState == 0:
+                            break
+                        time.sleep(0.5)
                     wb.Save()
                     wb.Close(False)
                     print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
