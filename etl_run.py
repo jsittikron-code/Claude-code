@@ -19,6 +19,7 @@
 import os
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEPT_DIR = (
@@ -37,13 +38,16 @@ def head(text: str) -> None:
 
 
 def run(args, label: str) -> int:
-    """รันสคริปต์ลูก ให้ผลลัพธ์ไหลออกหน้าจอสด ๆ"""
+    """รันสคริปต์ลูก ให้ผลลัพธ์ไหลออกหน้าจอสด ๆ แล้วบอกเวลาที่ใช้"""
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    t0 = time.time()
     try:
-        return subprocess.call([sys.executable] + args, env=env, cwd=HERE)
+        rc = subprocess.call([sys.executable] + args, env=env, cwd=HERE)
     except Exception as e:
         print(f"  เรียก {label} ไม่สำเร็จ: {e}")
         return 1
+    print(f"  (ใช้เวลา {time.time() - t0:.0f} วินาที)")
+    return rc
 
 
 def snapshot():
@@ -139,11 +143,14 @@ def main() -> int:
             return 0
 
     head("ขั้น 3/4  อัปเดตฐานข้อมูลหลัก")
+    print("  ขั้นนี้เขียนไฟล์ Excel ขนาดใหญ่ ใช้เวลาหลายนาทีและหน้าจอจะเงียบ")
+    print("  อย่าเพิ่งปิดหน้าต่าง รอจนขึ้นข้อความขั้นถัดไป\n")
     if run([UPDATE_MOS], "update_mos.py") != 0:
         print("\n  อัปเดตไม่สำเร็จ — ไฟล์เดิมถูกสำรองไว้ในโฟลเดอร์ _backup_ROLLBACK_ แล้ว")
         return 1
 
     head("ขั้น 4/4  ให้ Excel คำนวณสูตรแล้วเซฟ")
+    print("  เปิด Excel เบื้องหลังเพื่อคำนวณสูตร ใช้เวลาราวหนึ่งถึงสองนาที\n")
     rc = run([os.path.join(HERE, "etl_recalc_excel.py")], "etl_recalc_excel.py")
 
     head("เสร็จเรียบร้อย" if rc == 0 else "เสร็จแล้ว แต่ขั้น 4 มีปัญหา")
@@ -165,5 +172,8 @@ if __name__ == "__main__":
         print("\n\n  ยกเลิกโดยผู้ใช้")
         code = 1
     print()
-    input("  กด Enter เพื่อปิดหน้าต่าง...")
+    try:
+        input("  กด Enter เพื่อปิดหน้าต่าง...")
+    except EOFError:
+        pass          # รันแบบไม่มีแป้นพิมพ์ ไม่ต้องรอ
     sys.exit(code)
