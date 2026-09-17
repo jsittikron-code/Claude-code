@@ -94,6 +94,38 @@ def report(before_rows, before_last) -> None:
             print(f"  *** ข้อมูลล่าสุดเก่ากว่าปัจจุบัน {gap:.0f} ชั่วโมง ***")
             print("  ตรวจว่าดึง export ถูกไฟล์หรือไม่")
 
+    check_oee_duplicates()
+
+
+def check_oee_duplicates() -> None:
+    """เตือนถ้าไฟล์ OEE มีเครื่องเดียวกันซ้ำในวันเดียวกัน
+
+    ETL ของฝ่ายตัดแถวซ้ำเฉพาะฝั่ง Workcenter ฝั่ง OEE ต่อท้ายชีตโดยไม่เทียบของเดิม
+    อัปเดตสองรอบในวันเดียวจึงได้แถวซ้ำ แล้วยอดรวมของวันนั้นพองเป็นเท่าตัว
+    (เจอ 2026-09-17 วันที่ 12 ก.ย. มี 132 แถวจาก 50 เครื่อง)
+
+    ที่นี่ตรวจอย่างเดียว ไม่แก้ เพราะการลบแถวออกจากฐานควรให้คนตัดสินใจ
+    ถ้าเจอ ให้รัน  python fix_oee_duplicates.py  ดูรายละเอียดก่อน
+    """
+    try:
+        import os
+        import pandas as pd
+        import data_paths
+        p = os.path.join(data_paths.DEPT_DIR,
+                         r"00_ETL_Pipeline\parquet\oee_report1.parquet")
+        if not os.path.exists(p):
+            return
+        o = pd.read_parquet(p)
+        d = pd.to_datetime(o["Trans_date"], errors="coerce").dt.date
+        dup = o.assign(_d=d).duplicated(subset=["MC", "_d"]).sum()
+        if dup:
+            print()
+            print(f"  *** ไฟล์ OEE มีเครื่องซ้ำวันเดียวกัน {dup} แถว ***")
+            print("  ตัวเลข OEE ของวันนั้นจะสูงเกินจริง")
+            print("  ดูรายละเอียดด้วย  python fix_oee_duplicates.py")
+    except Exception:
+        pass
+
 
 def main() -> int:
     head("อัปเดตข้อมูล MOS ประจำวัน")
