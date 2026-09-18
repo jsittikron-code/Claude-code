@@ -101,11 +101,32 @@ def main() -> int:
         print("  ถ้าเพิ่งดึง export มา ให้ตรวจว่าลงในโฟลเดอร์ Downloads จริงไหม")
         return NOTHING_TO_MOVE
 
-    missing = [k for k in PATTERNS if k not in group]
+    dest = os.path.join(RAW_ROOT, folder)
+
+    # ไฟล์ที่ย้ายเข้าโฟลเดอร์ปลายทางไปแล้วในรอบก่อน ถือว่า "มีแล้ว" เหมือนกัน
+    #
+    # ทำไมต้องนับด้วย
+    #   สคริปต์นี้ "ย้าย" ไฟล์ออกจาก Downloads พอย้ายแล้ว Downloads ก็ไม่มีมันอีก
+    #   ถ้ารอบต่อมาดูแต่ Downloads จะสรุปว่า "ขาดไฟล์ใบงาน" แล้วหยุด
+    #   ทั้งที่ไฟล์นั้นอยู่ในโฟลเดอร์เรียบร้อยแล้ว
+    #   (เกิดจริง 18 ก.ย. 2569 ย้ายใบงานตอนเช้า พอดึง OEE มาเพิ่มตอนสาย
+    #    แล้วกดอัปเดต มันจะไม่ยอมย้าย OEE เพราะคิดว่าขาดใบงาน)
+    มีแล้วในโฟลเดอร์ = set()
+    if os.path.isdir(dest):
+        for k, pat in PATTERNS.items():
+            if glob.glob(os.path.join(dest, pat)):
+                มีแล้วในโฟลเดอร์.add(k)
+
+    missing = [k for k in PATTERNS
+               if k not in group and k not in มีแล้วในโฟลเดอร์]
     if "ใบงานรายเครื่อง" in missing:
-        print("\n  ไม่มีไฟล์ใบงานรายเครื่อง (r-jobtran-mc) ของวันนี้ใน Downloads")
+        print("\n  ไม่มีไฟล์ใบงานรายเครื่อง (r-jobtran-mc) ของวันนี้")
+        print("  หาทั้งใน Downloads และในโฟลเดอร์ %s แล้วไม่พบ" % folder)
         print("  ไฟล์นี้ขาดไม่ได้ ทั้ง Workcenter และ MTBF สร้างจากมัน")
         return NOTHING_TO_MOVE
+    if มีแล้วในโฟลเดอร์:
+        print("  มีอยู่ในโฟลเดอร์ %s แล้ว: %s"
+              % (folder, ", ".join(sorted(มีแล้วในโฟลเดอร์))))
 
     # ขาดแต่ OEE ยังเดินต่อได้ ไม่ถือว่าหยุด
     #
@@ -117,12 +138,10 @@ def main() -> int:
     #   ทั้งที่ไม่มีอะไรผิด (เกิดจริง 18 ก.ย. 2569 ดึงมาแต่ใบงาน ลืม OEE
     #   ผลคือแดชบอร์ดค้างอยู่ที่ 16 ก.ย. ทั้งที่ข้อมูล 17 ก.ย. อยู่ในไฟล์แล้ว)
     if missing:
-        print(f"\n  [!] วันที่ {folder} มีแต่ใบงาน ขาดไฟล์ {', '.join(missing)}")
+        print(f"\n  [!] วันที่ {folder} ยังขาดไฟล์ {', '.join(missing)}")
         print("      จะเดินต่อโดยอัปเดตเฉพาะ Workcenter กับ MTBF")
         print("      ตัวเลข OEE จะยังเป็นของรอบก่อน ถ้าต้องการให้ครบ")
         print("      ให้ดึง export OEE จาก MOS แล้วกดไอคอนอีกครั้ง")
-
-    dest = os.path.join(RAW_ROOT, folder)
 
     # ถ้าไฟล์ชุดนี้ถูกย้ายเข้าไปแล้ว ให้บอกแล้วผ่านไป ไม่ต้องหาไฟล์เก่ามาแทน
     # เทียบเฉพาะชนิดที่มีจริงใน Downloads รอบนี้ ไม่ใช่ทุกชนิดที่ระบบรู้จัก
