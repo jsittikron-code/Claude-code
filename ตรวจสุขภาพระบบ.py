@@ -182,15 +182,24 @@ def ตรวจแดชบอร์ด():
         import subprocess
         r = subprocess.run(["netstat", "-ano", "-p", "TCP"],
                            capture_output=True, text=True, timeout=30)
-        นับ = {}
+        # นับ "จำนวนโปรเซสที่ต่างกัน" ต่อพอร์ต ไม่ใช่จำนวนบรรทัด
+        #
+        # ของเดิมนับบรรทัดแล้วถือว่าเกิน 2 = ซ้ำ โดยคิดว่าโปรเซสเดียวจะขึ้น 2 บรรทัด
+        # (IPv4 + IPv6) เสมอ ซึ่งไม่จริง streamlit บางครั้งจับแค่ IPv4 บรรทัดเดียว
+        # 23 ก.ย. 2569 พอร์ต 8507 มี 2 โปรเซสจริงแต่ขึ้นแค่ 2 บรรทัด ตัวตรวจจึงบอก
+        # "ไม่มีพอร์ตซ้ำ" ทั้งที่ซ้ำอยู่ — นับ PID แทนจะถูกไม่ว่าจับกี่ stack
+        pid_ของพอร์ต = {}
         for ln in r.stdout.splitlines():
             if "LISTENING" not in ln:
                 continue
+            ส่วน = ln.split()
+            if len(ส่วน) < 5:
+                continue
+            pid = ส่วน[-1]
             for p in PORTS:
-                if (":%d " % p) in ln:
-                    นับ[p] = นับ.get(p, 0) + 1
-        # ปกติพอร์ตหนึ่งจะขึ้น 2 บรรทัด (IPv4 + IPv6) จากโปรเซสเดียว
-        ซ้ำ = [p for p, n in นับ.items() if n > 2]
+                if ส่วน[1].endswith(":%d" % p):
+                    pid_ของพอร์ต.setdefault(p, set()).add(pid)
+        ซ้ำ = [p for p, s in pid_ของพอร์ต.items() if len(s) > 1]
     except Exception:
         pass
 
