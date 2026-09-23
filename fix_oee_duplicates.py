@@ -79,7 +79,7 @@ def main() -> int:
         print("  ถ้าจะแก้จริง สั่ง  python fix_oee_duplicates.py --apply")
         return 0
 
-    bdir = os.path.join(DEPT_DIR, "_backup_ROLLBACK_" + dt.datetime.now().strftime("%Y%m%d"))
+    bdir = os.path.join(DEPT_DIR, "_backup_ROLLBACK", dt.datetime.now().strftime("%Y%m%d"))
     os.makedirs(bdir, exist_ok=True)
     bak = os.path.join(bdir, os.path.basename(OEE))
     if not os.path.exists(bak):
