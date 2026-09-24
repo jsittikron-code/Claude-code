@@ -33,6 +33,8 @@ DEPT_DIR = (
     r"\ฝ่ายซ่อมบำรุงรักษา"
 )
 
+RETRIES = 6          # จำนวนครั้งที่ลองเปิดไฟล์ด้วย Excel ก่อนยอมแพ้ (ดูเหตุผลใน recalc)
+
 TARGETS = [
     os.path.join(DEPT_DIR, r"2.เรื่องMTBF-MTTR\รายละเอียด"
                            r"\MTBF-MTTR_ฐานข้อมูลหลัก_2569.xlsx"),
@@ -67,7 +69,13 @@ def recalc(paths) -> bool:
                 continue
             # Excel ปฏิเสธคำสั่งได้ถ้ามันกำลังยุ่ง หรือไฟล์เพิ่งถูกอ่านค้างอยู่
             # (com_error 'Call was rejected by callee') รอแล้วลองใหม่มักผ่าน
-            for attempt in range(1, 4):
+            #
+            # ต้องรอนานพอ เพราะไฟล์ OEE ถูกขั้นที่ 3 เขียนเสร็จเพียงไม่กี่วินาทีก่อนถึงตรงนี้
+            # และ OneDrive จะคว้าไฟล์ไปอัปโหลดทันที ช่วงนั้น Excel เปิดไม่ได้
+            # เดิมลอง 3 ครั้ง ห่าง 5 วิ (~15 วิ) ไม่พอ: 24 ก.ย. 2569 08:01 MTBF ผ่าน
+            # แต่ OEE ล้มทั้ง 3 ครั้ง สูตร 'หมวดหมู่เครื่อง' ว่างทั้งคอลัมน์จนมีคนมาสั่งใหม่ตอนบ่าย
+            # ตอนนี้ลอง RETRIES ครั้ง รอนานขึ้นทีละ 5 วิ (5,10,15,...) รวมราว 1.5 นาที
+            for attempt in range(1, RETRIES + 1):
                 try:
                     wb = xl.Workbooks.Open(p, UpdateLinks=0, ReadOnly=False)
                     xl.Calculation = -4105          # xlCalculationAutomatic
@@ -89,12 +97,14 @@ def recalc(paths) -> bool:
                     print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
                     break
                 except Exception as e:
-                    if attempt == 3:
+                    if attempt == RETRIES:
                         ok = False
-                        print(f"  ผิดพลาด {os.path.basename(p)}: {e}")
+                        print(f"  ผิดพลาด {os.path.basename(p)} หลังลอง {RETRIES} ครั้ง: {e}")
                     else:
-                        print(f"  ลองใหม่ครั้งที่ {attempt + 1} ({os.path.basename(p)})")
-                        time.sleep(5)
+                        wait = 5 * attempt
+                        print(f"  เปิดไม่ได้ (น่าจะ OneDrive กำลังซิงก์) รอ {wait} วิ "
+                              f"แล้วลองครั้งที่ {attempt + 1}/{RETRIES} ({os.path.basename(p)})")
+                        time.sleep(wait)
     finally:
         # ต้องปิด Excel ให้ได้เสมอ ถ้าเหลือค้างไว้ มันจะถือไฟล์แล้วทำให้
         # รอบถัดไปสั่งงานไม่ได้ และแดชบอร์ดอ่านช่องสูตรได้เป็นค่าว่าง

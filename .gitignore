@@ -15,3 +15,6 @@ py_progress/
 # OS
 Thumbs.db
 .DS_Store
+
+# etl_run.py — log ของแต่ละรอบอัปเดต (เก็บ 30 รอบ ไม่ต้องเข้า git)
+logs/

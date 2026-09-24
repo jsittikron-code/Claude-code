@@ -37,12 +37,68 @@ def head(text: str) -> None:
     print(LINE)
 
 
+LOG_DIR = os.path.join(HERE, "logs")
+LOG_KEEP = 30       # เก็บ log ย้อนหลังกี่รอบ
+
+
+class _Tee:
+    """เขียนทุกอย่างทั้งลงจอและลงไฟล์ log พร้อมกัน
+
+    มีไว้เพราะหน้าต่าง .bat ปิดแล้วผลลัพธ์หายหมด เวลาขั้นไหนล้มตอนเช้า
+    กว่าจะมีคนมาดูก็บ่าย และไม่เหลืออะไรให้อ่านว่าล้มเพราะอะไร
+    """
+    encoding = "utf-8"
+
+    def __init__(self, path: str):
+        self.console = sys.stdout
+        self.f = open(path, "a", encoding="utf-8")
+
+    def write(self, s: str) -> int:
+        self.console.write(s)
+        self.f.write(s)
+        self.f.flush()          # flush ทุกครั้ง เผื่อถูกปิดกลางคัน จะได้เหลือถึงบรรทัดสุดท้าย
+        return len(s)
+
+    def flush(self) -> None:
+        self.console.flush()
+        self.f.flush()
+
+
+def _start_log() -> str:
+    """เปิดไฟล์ log ของรอบนี้ ผูกกับ stdout/stderr แล้วลบ log เก่าที่เกินโควตา"""
+    os.makedirs(LOG_DIR, exist_ok=True)
+    path = os.path.join(LOG_DIR, time.strftime("etl_%Y%m%d_%H%M%S.log"))
+    sys.stdout = _Tee(path)
+    sys.stderr = sys.stdout
+    old = sorted(f for f in os.listdir(LOG_DIR) if f.startswith("etl_") and f.endswith(".log"))
+    for f in old[:-LOG_KEEP]:
+        try:
+            os.remove(os.path.join(LOG_DIR, f))
+        except OSError:
+            pass
+    return path
+
+
 def run(args, label: str) -> int:
-    """รันสคริปต์ลูก ให้ผลลัพธ์ไหลออกหน้าจอสด ๆ แล้วบอกเวลาที่ใช้"""
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    """รันสคริปต์ลูก ให้ผลลัพธ์ไหลออกหน้าจอสด ๆ แล้วบอกเวลาที่ใช้
+
+    อ่านผลลัพธ์ของลูกผ่าน pipe แล้วพิมพ์ต่อทีละบรรทัด ไม่ปล่อยให้ลูกเขียนจอเอง
+    เพื่อให้ทุกบรรทัดผ่าน sys.stdout ของเรา ซึ่ง main() ผูกไว้กับไฟล์ log ด้วย
+    ไม่งั้นพอปิดหน้าต่าง ผลของขั้นที่ล้มจะหายไปหมด ไม่มีทางรู้ว่าล้มเพราะอะไร
+    (24 ก.ย. 2569 ขั้น 4 ล้มตอน 08:01 กว่าจะรู้ก็ 14:21 และไม่เหลือหลักฐานว่าล้มยังไง)
+
+    PYTHONUNBUFFERED=1 สำคัญ ไม่งั้น Python ในลูกจะเก็บผลลัพธ์ไว้เป็นก้อนก่อนส่งผ่าน pipe
+    หน้าจอจะเงียบนานกว่าเดิม ซึ่งคือจังหวะที่คนกดปิดหน้าต่าง
+    """
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1")
     t0 = time.time()
     try:
-        rc = subprocess.call([sys.executable] + args, env=env, cwd=HERE)
+        proc = subprocess.Popen([sys.executable] + args, env=env, cwd=HERE,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace", bufsize=1)
+        for line in proc.stdout:
+            print(line, end="")
+        rc = proc.wait()
     except Exception as e:
         print(f"  เรียก {label} ไม่สำเร็จ: {e}")
         return 1
@@ -128,7 +184,9 @@ def check_oee_duplicates() -> None:
 
 
 def main() -> int:
+    log_path = _start_log()
     head("อัปเดตข้อมูล MOS ประจำวัน")
+    print(f"  {time.strftime('%Y-%m-%d %H:%M:%S')}  บันทึกผลรอบนี้ไว้ที่ {log_path}")
     before_rows, _ = snapshot()
     if not os.path.exists(UPDATE_MOS):
         print("  ไม่พบสคริปต์ ETL ของฝ่ายที่")
@@ -194,6 +252,8 @@ def main() -> int:
     else:
         print("  ฐานข้อมูลอัปเดตแล้ว แต่สูตรใน Excel อาจยังไม่ถูกคำนวณ")
         print("  ให้เปิดไฟล์เรื่อง 2 และ 3 ด้วย Excel แล้วกด Save 1 ครั้ง")
+    print(f"\n  ผลทั้งหมดของรอบนี้อยู่ใน  {log_path}")
+    print("  ถ้ามีอะไรผิด ส่งไฟล์นี้ให้คนดูแลระบบได้เลย ไม่ต้องถ่ายจอ")
     return rc
 
 
