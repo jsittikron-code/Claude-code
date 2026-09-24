@@ -2247,17 +2247,130 @@ with tab_perf:
     )
 
 # --- 7) ข้อมูลดิบ ---
-with tab_raw:
-    st.subheader("📋 ธุรกรรมทั้งหมดของวันที่เลือก")
-    display = day_df.drop(columns=["Date", "IsDowntime", "EndDisplay"], errors="ignore").copy()
-    display = display.sort_values(["Machine", "Start"])
-    st.dataframe(display, width="stretch", hide_index=True, height=520)
+@st.cache_data(show_spinner="กำลังสร้างไฟล์ Excel...")
+def _excel_bytes(df: pd.DataFrame) -> bytes:
+    """แปลงตารางเป็นไฟล์ .xlsx — cache ไว้ ไม่งั้นทุกครั้งที่ขยับตัวกรองจะสร้างใหม่หลายวินาที"""
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, sheet_name="ข้อมูลดิบ", engine="openpyxl")
+    return buf.getvalue()
 
-    csv_buf = io.BytesIO()
-    display.to_csv(csv_buf, index=False, encoding="utf-8-sig")
-    st.download_button(
-        "⬇️ ดาวน์โหลดเป็น CSV",
-        data=csv_buf.getvalue(),
-        file_name=f"workcenter_{sel_date:%Y%m%d}.csv",
-        mime="text/csv",
-    )
+
+# --- 7) ข้อมูลดิบ ---
+# แท็บนี้มีตัวเลือกช่วงวันของตัวเอง ไม่ผูกกับ "วันที่" ในแถบข้าง เพราะอีก 6 แท็บ
+# ทำงานแบบวันเดียว (สถานะสด, Timeline) ถ้าเปลี่ยนตัวเลือกกลางจะกระทบทั้งหน้า
+# ค่าเริ่มต้นคือ "วันที่เลือก" เพื่อให้พฤติกรรมเดิมยังอยู่ครบ
+#
+# ข้อจำกัดที่ตั้งใจ
+#   แสดงบนจอไม่เกิน RAW_SHOW_MAX แถว เพราะ st.dataframe ส่งทั้งตารางไปเบราว์เซอร์
+#   หลายหมื่นแถวจะช้าจนหน้าค้าง แต่ไฟล์ที่ดาวน์โหลดมีครบทุกแถวเสมอ
+#   ปุ่ม Excel ให้เฉพาะเมื่อไม่เกิน RAW_EXCEL_MAX แถว เกินนั้น openpyxl ใช้เวลาเป็นนาที
+#   ให้ใช้ CSV แทน ซึ่งเปิดใน Excel ได้เหมือนกัน (utf-8-sig อ่านไทยถูก)
+RAW_SHOW_MAX = 5_000
+RAW_EXCEL_MAX = 20_000
+
+with tab_raw:
+    st.subheader("📋 ธุรกรรมทั้งหมด")
+
+    RAW_MODES = ["วันที่เลือก", "7 วันล่าสุด", "30 วันล่าสุด", "เลือกหลายวัน", "กำหนดเอง"]
+    c_mode, c_pick = st.columns([3, 2])
+    with c_mode:
+        raw_mode = st.segmented_control(
+            "ช่วงข้อมูล", RAW_MODES, default="วันที่เลือก", key="raw_mode",
+        ) or "วันที่เลือก"
+
+    # แปลงโหมดที่เลือกเป็น "รายการวันที่" ชุดเดียว ทุกโหมดจบที่ตัวแปรนี้
+    if raw_mode == "วันที่เลือก":
+        chosen_days = [sel_date]
+    elif raw_mode in ("7 วันล่าสุด", "30 วันล่าสุด"):
+        n = 7 if raw_mode.startswith("7") else 30
+        start = latest_date - timedelta(days=n - 1)
+        chosen_days = [d for d in dates if start <= d <= latest_date]
+    elif raw_mode == "เลือกหลายวัน":
+        with c_pick:
+            chosen_days = st.multiselect(
+                "เลือกวัน", options=list(reversed(dates)), default=[sel_date],
+                format_func=lambda d: f"{d:%d/%m/%Y}", key="raw_days",
+                placeholder="เลือกได้หลายวัน",
+            )
+    else:  # กำหนดเอง
+        with c_pick:
+            default_start = max(dates[0], sel_date - timedelta(days=6))
+            picked = st.date_input(
+                "ช่วงวันที่", value=(default_start, sel_date),
+                min_value=dates[0], max_value=latest_date, key="raw_range",
+            )
+        # ตอนผู้ใช้เพิ่งคลิกวันแรก date_input ส่งมาแค่ค่าเดียว ยังไม่ครบช่วง
+        if isinstance(picked, tuple) and len(picked) == 2:
+            r0, r1 = picked
+        elif isinstance(picked, tuple) and len(picked) == 1:
+            r0 = r1 = picked[0]
+        else:
+            r0 = r1 = picked
+        chosen_days = [d for d in dates if r0 <= d <= r1]
+
+    raw_df = data[data["Date"].isin(chosen_days)]
+    if sel_groups:
+        raw_df = raw_df[raw_df["Group"].isin(sel_groups)]
+
+    # ตัวกรองเพิ่ม — ตัวเลือกมาจากข้อมูลในช่วงที่เลือกเท่านั้น จะได้ไม่มีตัวเลือกว่าง
+    f1, f2 = st.columns(2)
+    with f1:
+        sel_machines = st.multiselect(
+            "เครื่อง", sorted(raw_df["Machine"].dropna().unique()),
+            default=[], placeholder="ทุกเครื่อง", key="raw_machines",
+        )
+    with f2:
+        sel_types = st.multiselect(
+            "ประเภทงาน", sorted(raw_df["ประเภทงาน"].dropna().unique()),
+            default=[], placeholder="ทุกประเภท", key="raw_types",
+        )
+    if sel_machines:
+        raw_df = raw_df[raw_df["Machine"].isin(sel_machines)]
+    if sel_types:
+        raw_df = raw_df[raw_df["ประเภทงาน"].isin(sel_types)]
+
+    if raw_df.empty:
+        st.info("ไม่มีธุรกรรมในช่วงและตัวกรองที่เลือก")
+    else:
+        display = (raw_df.drop(columns=["Date", "IsDowntime", "EndDisplay"], errors="ignore")
+                   .sort_values(["Start", "Machine"]))
+        d0, d1 = min(chosen_days), max(chosen_days)
+        span = f"{d0:%d/%m/%Y}" if d0 == d1 else f"{d0:%d/%m/%Y} – {d1:%d/%m/%Y}"
+        st.caption(
+            f"**{len(display):,} แถว** · {display['Machine'].nunique()} เครื่อง · "
+            f"{len(chosen_days)} วัน ({span}) · "
+            f"เวลารวม {display['DurationMin'].sum() / 60:,.1f} ชม."
+        )
+
+        if len(display) > RAW_SHOW_MAX:
+            st.dataframe(display.head(RAW_SHOW_MAX), width="stretch",
+                         hide_index=True, height=520)
+            st.caption(
+                f"แสดง {RAW_SHOW_MAX:,} แถวแรกบนจอ · ไฟล์ที่ดาวน์โหลดมีครบ {len(display):,} แถว"
+            )
+        else:
+            st.dataframe(display, width="stretch", hide_index=True, height=520)
+
+        stem = (f"workcenter_{d0:%Y%m%d}" if d0 == d1
+                else f"workcenter_{d0:%Y%m%d}-{d1:%Y%m%d}")
+        csv_buf = io.BytesIO()
+        display.to_csv(csv_buf, index=False, encoding="utf-8-sig")
+
+        b1, b2, _ = st.columns([1, 1, 3])
+        with b1:
+            # on_click="ignore" — กดดาวน์โหลดแล้วไม่ต้อง rerun ทั้งหน้า
+            st.download_button(
+                "⬇️ CSV", data=csv_buf.getvalue(), file_name=stem + ".csv",
+                mime="text/csv", on_click="ignore", width="stretch",
+                help="เปิดใน Excel ได้ อ่านภาษาไทยถูกต้อง",
+            )
+        with b2:
+            if len(display) <= RAW_EXCEL_MAX:
+                st.download_button(
+                    "⬇️ Excel", data=_excel_bytes(display), file_name=stem + ".xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    on_click="ignore", width="stretch",
+                )
+            else:
+                st.button("⬇️ Excel", disabled=True, width="stretch",
+                          help=f"เกิน {RAW_EXCEL_MAX:,} แถว สร้าง Excel จะช้ามาก — ใช้ CSV แทน")
