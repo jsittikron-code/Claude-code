@@ -785,6 +785,41 @@ def reference_time() -> tuple[pd.Timestamp, bool]:
 
 
 # ---------------------------------------------------------------------------
+# ตัวช่วยส่งออก — ใช้ร่วมกันทั้งแท็บ MTBF/MTTR และแท็บข้อมูลดิบ
+# ---------------------------------------------------------------------------
+# แสดงบนจอไม่เกิน RAW_SHOW_MAX แถว เพราะ st.dataframe ส่งทั้งตารางไปเบราว์เซอร์
+# หลายหมื่นแถวจะช้าจนหน้าค้าง แต่ไฟล์ที่ดาวน์โหลดมีครบทุกแถวเสมอ
+# ปุ่ม Excel ให้เฉพาะเมื่อไม่เกิน RAW_EXCEL_MAX แถว เกินนั้น openpyxl ใช้เวลาเป็นนาที
+# ให้ใช้ CSV แทน ซึ่งเปิดใน Excel ได้เหมือนกัน (utf-8-sig อ่านไทยถูก)
+RAW_SHOW_MAX = 5_000
+RAW_EXCEL_MAX = 20_000
+
+
+@st.cache_data(show_spinner="กำลังสร้างไฟล์ Excel...")
+def _excel_bytes(df: pd.DataFrame) -> bytes:
+    """แปลงตารางเป็นไฟล์ .xlsx — cache ไว้ ไม่งั้นทุกครั้งที่ขยับตัวกรองจะสร้างใหม่หลายวินาที"""
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, sheet_name="ข้อมูลดิบ", engine="openpyxl")
+    return buf.getvalue()
+
+
+@st.cache_data(show_spinner="กำลังสร้างไฟล์ Excel...")
+def _excel_sheets_bytes(frames: dict) -> bytes:
+    """หลายตารางลงไฟล์ .xlsx เดียว ชีตละตาราง (ชื่อชีตยาวได้ไม่เกิน 31 ตัวตามกฎ Excel)"""
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+        for name, df in frames.items():
+            df.to_excel(xw, index=False, sheet_name=str(name)[:31])
+    return buf.getvalue()
+
+
+def _csv_bytes(df: pd.DataFrame) -> bytes:
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False, encoding="utf-8-sig")
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # แท็บหลัก
 # ---------------------------------------------------------------------------
 (tab_live, tab_timeline, tab_down, tab_mtbf, tab_profile,
@@ -1526,6 +1561,116 @@ with tab_mtbf:
             "เครื่องที่ไม่มี Breakdown ในช่วงที่เลือก แสดงเป็นค่าว่าง"
         )
 
+        # ---- ข้อมูลดิบเบื้องหลังตัวเลขในแท็บนี้ ----
+        # ให้ตามรอยได้ว่าการ์ดข้างบนมาจากแถวไหน และดึงออกไปใช้ต่อได้
+        # ทั้งสามตารางคิดจากขอบเขตเดียวกับการ์ดเป๊ะ (ช่วงวัน + กลุ่ม + เครื่องที่เจาะจง)
+        # ตัวเลขในหัวตารางต้องตรงกับการ์ด ถ้าไม่ตรงแปลว่ามีบั๊ก
+        st.markdown("---")
+        with st.expander(
+            f"📥 ข้อมูลดิบเบื้องหลังตัวเลข — {scope.replace('**', '')} · "
+            f"{r_start:%d/%m/%Y} – {r_end:%d/%m/%Y}",
+            expanded=False,
+        ):
+            n_matched = int(pr["matched"].sum()) if not pr.empty else 0
+            st.caption(
+                f"การ์ดข้างบนคิดจาก 3 ตารางนี้ · "
+                f"**แจ้งซ่อม B {n_bd} ครั้ง** = จำนวนแถวตาราง 1 · "
+                f"**เวลาหยุดรวม {downtime_total:,.0f} นาที** = ผลรวมคอลัมน์ 'หยุดรวม' ตาราง 1 · "
+                f"**Net Operation Time {runtime_min:,.0f} นาที** = ผลรวมตาราง 3"
+            )
+
+            # ตาราง 1 — เหตุการณ์เสียที่จับคู่ B→BP แล้ว (ตัวตั้งของ MTTR / Downtime)
+            pr_show = pd.DataFrame()
+            if not pr.empty:
+                pr_show = pr.sort_values("b_start").rename(columns={
+                    "Machine": "เครื่อง", "b_start": "แจ้งซ่อม B เริ่ม", "b_end": "B จบ",
+                    "bp_start": "ช่างเข้า BP เริ่ม", "bp_end": "BP จบ",
+                    "wait_min": "รอช่าง (นาที)", "repair_min": "ช่างซ่อม (นาที)",
+                    "downtime_min": "หยุดรวม (นาที)", "matched": "จับคู่ได้", "Reason": "สาเหตุ",
+                })
+                for c in ("รอช่าง (นาที)", "ช่างซ่อม (นาที)", "หยุดรวม (นาที)"):
+                    pr_show[c] = pd.to_numeric(pr_show[c], errors="coerce").round(1)
+            st.markdown(
+                f"**ตาราง 1 · เหตุการณ์เสีย (B→BP จับคู่แล้ว)** — {len(pr_show)} ครั้ง · "
+                f"จับคู่ BP ได้ {n_matched} · ไม่พบคู่ {len(pr_show) - n_matched} "
+                f"(ใช้ระยะเวลาใบ B แทน)"
+            )
+            if pr_show.empty:
+                st.info("ไม่มีเหตุการณ์แจ้งซ่อม (B) ในขอบเขตนี้")
+            else:
+                st.dataframe(pr_show, width="stretch", hide_index=True,
+                             height=min(420, 38 + 35 * len(pr_show)))
+
+            # ตาราง 2 — เหตุการณ์ทุกประเภทที่อยู่ในขอบเขต (B, BP, P)
+            ev_cols = [c for c in ("Machine", "ประเภทงาน", "Start", "End", "DurationMin",
+                                   "สาเหตุ", "Name", "Group") if c in ev.columns]
+            ev_show = ev[ev_cols].sort_values("Start").rename(columns={
+                "Machine": "เครื่อง", "DurationMin": "นาที", "Name": "พนักงาน", "Group": "กลุ่ม",
+            })
+            by_type = ev["ประเภทงาน"].value_counts()
+            st.markdown(
+                f"**ตาราง 2 · เหตุการณ์ทั้งหมดในขอบเขต** — {len(ev_show):,} แถว · "
+                + " · ".join(f"{k.split(' - ')[0]} {v}" for k, v in by_type.items())
+            )
+            if len(ev_show) > RAW_SHOW_MAX:
+                st.dataframe(ev_show.head(RAW_SHOW_MAX), width="stretch", hide_index=True, height=420)
+                st.caption(f"แสดง {RAW_SHOW_MAX:,} แถวแรกบนจอ · ไฟล์ที่ดาวน์โหลดมีครบ")
+            else:
+                st.dataframe(ev_show, width="stretch", hide_index=True,
+                             height=min(420, 38 + 35 * max(len(ev_show), 1)))
+
+            # ตาราง 3 — เวลาเดินเครื่องรายวันจากฐาน OEE (ตัวตั้งของ MTBF)
+            run_show = pd.DataFrame()
+            if not run.empty:
+                run_show = (run[["MC", "Date", "เวลาทำงานจริง/วัน"]]
+                            .sort_values(["Date", "MC"])
+                            .rename(columns={"MC": "เครื่อง", "Date": "วันที่",
+                                             "เวลาทำงานจริง/วัน": "เวลาทำงานจริง (นาที)"}))
+            st.markdown(
+                f"**ตาราง 3 · เวลาเดินเครื่องรายวัน (ฐาน OEE)** — {len(run_show):,} แถว · "
+                f"รวม {runtime_min:,.0f} นาที = {net_op_h:,.1f} ชม."
+            )
+            if run_show.empty:
+                st.info("ไม่มีข้อมูลเวลาเดินเครื่องในขอบเขตนี้")
+            elif len(run_show) > RAW_SHOW_MAX:
+                st.dataframe(run_show.head(RAW_SHOW_MAX), width="stretch", hide_index=True, height=320)
+                st.caption(f"แสดง {RAW_SHOW_MAX:,} แถวแรกบนจอ · ไฟล์ที่ดาวน์โหลดมีครบ")
+            else:
+                st.dataframe(run_show, width="stretch", hide_index=True,
+                             height=min(320, 38 + 35 * len(run_show)))
+
+            # ---- ส่งออก ----
+            stem = f"mtbf_{r_start:%Y%m%d}-{r_end:%Y%m%d}"
+            if sel_mcs:
+                stem += "_" + ("-".join(sel_mcs) if len(sel_mcs) <= 3 else f"{len(sel_mcs)}เครื่อง")
+            frames = {"1_เหตุการณ์เสีย_B-BP": pr_show, "2_เหตุการณ์ทั้งหมด": ev_show,
+                      "3_เวลาเดินเครื่องรายวัน": run_show}
+            total_rows = sum(len(f) for f in frames.values())
+            x1, x2, x3, x4, _ = st.columns([1.3, 1, 1, 1, 2])
+            with x1:
+                if total_rows <= RAW_EXCEL_MAX:
+                    st.download_button(
+                        "⬇️ Excel ทั้ง 3 ตาราง", data=_excel_sheets_bytes(frames),
+                        file_name=stem + ".xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        on_click="ignore", width="stretch",
+                        help="ไฟล์เดียว 3 ชีต ชื่อชีตตรงกับหมายเลขตาราง",
+                    )
+                else:
+                    st.button("⬇️ Excel ทั้ง 3 ตาราง", disabled=True, width="stretch",
+                              help=f"รวมเกิน {RAW_EXCEL_MAX:,} แถว ใช้ CSV รายตารางแทน")
+            for col, (label, df_, tag) in zip(
+                (x2, x3, x4),
+                (("CSV ตาราง 1", pr_show, "1_B-BP"), ("CSV ตาราง 2", ev_show, "2_events"),
+                 ("CSV ตาราง 3", run_show, "3_runtime")),
+            ):
+                with col:
+                    st.download_button(
+                        "⬇️ " + label, data=_csv_bytes(df_), file_name=f"{stem}_{tag}.csv",
+                        mime="text/csv", on_click="ignore", width="stretch",
+                        disabled=df_.empty,
+                    )
+
 # --- 5) โปรไฟล์เครื่องจักร — รวมทุกฐานข้อมูลของเครื่องเดียวไว้หน้าเดียว ---
 with tab_profile:
     prof_machines = sorted(set(data["Machine"]) | set(registry.index)
@@ -2247,27 +2392,11 @@ with tab_perf:
     )
 
 # --- 7) ข้อมูลดิบ ---
-@st.cache_data(show_spinner="กำลังสร้างไฟล์ Excel...")
-def _excel_bytes(df: pd.DataFrame) -> bytes:
-    """แปลงตารางเป็นไฟล์ .xlsx — cache ไว้ ไม่งั้นทุกครั้งที่ขยับตัวกรองจะสร้างใหม่หลายวินาที"""
-    buf = io.BytesIO()
-    df.to_excel(buf, index=False, sheet_name="ข้อมูลดิบ", engine="openpyxl")
-    return buf.getvalue()
-
-
 # --- 7) ข้อมูลดิบ ---
 # แท็บนี้มีตัวเลือกช่วงวันของตัวเอง ไม่ผูกกับ "วันที่" ในแถบข้าง เพราะอีก 6 แท็บ
 # ทำงานแบบวันเดียว (สถานะสด, Timeline) ถ้าเปลี่ยนตัวเลือกกลางจะกระทบทั้งหน้า
 # ค่าเริ่มต้นคือ "วันที่เลือก" เพื่อให้พฤติกรรมเดิมยังอยู่ครบ
-#
-# ข้อจำกัดที่ตั้งใจ
-#   แสดงบนจอไม่เกิน RAW_SHOW_MAX แถว เพราะ st.dataframe ส่งทั้งตารางไปเบราว์เซอร์
-#   หลายหมื่นแถวจะช้าจนหน้าค้าง แต่ไฟล์ที่ดาวน์โหลดมีครบทุกแถวเสมอ
-#   ปุ่ม Excel ให้เฉพาะเมื่อไม่เกิน RAW_EXCEL_MAX แถว เกินนั้น openpyxl ใช้เวลาเป็นนาที
-#   ให้ใช้ CSV แทน ซึ่งเปิดใน Excel ได้เหมือนกัน (utf-8-sig อ่านไทยถูก)
-RAW_SHOW_MAX = 5_000
-RAW_EXCEL_MAX = 20_000
-
+# ขีดจำกัดจอ/Excel ดู RAW_SHOW_MAX, RAW_EXCEL_MAX ด้านบนไฟล์
 with tab_raw:
     st.subheader("📋 ธุรกรรมทั้งหมด")
 
