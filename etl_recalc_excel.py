@@ -47,6 +47,33 @@ VERIFY = (r"3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข
           "Report1", "หมวดหมู่เครื่อง")
 
 
+def _canary_filled(wb, sheet: str, col_name: str) -> bool:
+    """อ่านช่องสูตรแถวสุดท้ายของชีตผ่าน Excel โดยตรง — มีค่าแล้วหรือยัง
+
+    ใช้เช็กก่อนเซฟ เพราะ CalculationState บอกว่าเสร็จได้ทั้งที่ค่ายังไม่ลงช่อง
+    คืน True ถ้าอ่านไม่ได้ (ไม่พบชีต/คอลัมน์) จะได้ไม่ไปขวางการเซฟโดยไม่จำเป็น
+    """
+    try:
+        ws = wb.Worksheets(sheet)
+        col = None
+        for c in range(1, 200):
+            v = ws.Cells(1, c).Value
+            if v is None or v == "":
+                break
+            if str(v).strip() == col_name:
+                col = c
+                break
+        if col is None:
+            return True
+        last = ws.Cells(ws.Rows.Count, 1).End(-4162).Row      # xlUp
+        if last < 2:
+            return True
+        v = ws.Cells(last, col).Value
+        return v is not None and str(v).strip() != ""
+    except Exception:
+        return True
+
+
 def recalc(paths) -> bool:
     try:
         import win32com.client as win32
@@ -92,9 +119,33 @@ def recalc(paths) -> bool:
                         if xl.CalculationState == 0:
                             break
                         time.sleep(0.5)
+
+                    # CalculationState == 0 ยังเชื่อไม่ได้ว่าค่าลงช่องแล้ว
+                    # 1 ต.ค. 2569 07:59 สถานะบอกเสร็จ เซฟ ปิด แล้วคอลัมน์ หมวดหมู่เครื่อง
+                    # ยังว่าง 46/46 ทั้งที่รอแล้ว — จึงต้อง "อ่านช่องจริง" ก่อนเซฟ
+                    # ถ้ายังว่าง สั่งคำนวณใหม่แล้วรออีก ทำซ้ำได้ไม่กี่รอบ
+                    computed = True
+                    if os.path.basename(p) == os.path.basename(VERIFY[0]):
+                        for round_ in range(1, 4):
+                            if _canary_filled(wb, VERIFY[1], VERIFY[2]):
+                                computed = True
+                                break
+                            computed = False
+                            print(f"  ค่าในช่องสูตรยังว่าง สั่งคำนวณใหม่รอบ {round_}/3 "
+                                  f"({os.path.basename(p)})")
+                            xl.CalculateFull()
+                            for _ in range(120):
+                                if xl.CalculationState == 0:
+                                    break
+                                time.sleep(0.5)
+                            time.sleep(2)
                     wb.Save()
                     wb.Close(False)
-                    print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
+                    if computed:
+                        print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
+                    else:
+                        ok = False
+                        print(f"  เซฟแล้วแต่ค่าในช่องสูตรยังว่าง: {os.path.basename(p)}")
                     break
                 except Exception as e:
                     if attempt == RETRIES:
