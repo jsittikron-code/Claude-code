@@ -47,14 +47,22 @@ VERIFY = (r"3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข
           "Report1", "หมวดหมู่เครื่อง")
 
 
-def _canary_filled(wb, sheet: str, col_name: str) -> bool:
+def _canary_filled(wb, sheet: str, col_name: str):
     """อ่านช่องสูตรแถวสุดท้ายของชีตผ่าน Excel โดยตรง — มีค่าแล้วหรือยัง
 
     ใช้เช็กก่อนเซฟ เพราะ CalculationState บอกว่าเสร็จได้ทั้งที่ค่ายังไม่ลงช่อง
-    คืน True ถ้าอ่านไม่ได้ (ไม่พบชีต/คอลัมน์) จะได้ไม่ไปขวางการเซฟโดยไม่จำเป็น
+    คืน True = มีค่า, False = ยังว่าง, None = ตรวจไม่ได้ (บอกเหตุผลออกจอ)
+
+    ทำไม "ตรวจไม่ได้" ต้องเป็น None ไม่ใช่ True
+        เดิมคืน True ทุกกรณีที่อ่านไม่ได้ แปลว่าถ้าใครเปลี่ยนชื่อคอลัมน์หรือย้ายหัวตาราง
+        ตัวกันนี้จะหายไปเงียบ ๆ แล้วเรากลับไปสู่สภาพก่อน 1 ต.ค. 2569 โดยไม่รู้ตัว
     """
     try:
         ws = wb.Worksheets(sheet)
+    except Exception:
+        print(f"  ตรวจช่องสูตรไม่ได้: ไม่พบชีต '{sheet}'")
+        return None
+    try:
         col = None
         for c in range(1, 200):
             v = ws.Cells(1, c).Value
@@ -64,14 +72,17 @@ def _canary_filled(wb, sheet: str, col_name: str) -> bool:
                 col = c
                 break
         if col is None:
-            return True
+            print(f"  ตรวจช่องสูตรไม่ได้: ไม่พบคอลัมน์ '{col_name}' ในแถวที่ 1 ของ '{sheet}'")
+            return None
         last = ws.Cells(ws.Rows.Count, 1).End(-4162).Row      # xlUp
         if last < 2:
-            return True
+            print(f"  ตรวจช่องสูตรไม่ได้: ชีต '{sheet}' ไม่มีแถวข้อมูล")
+            return None
         v = ws.Cells(last, col).Value
         return v is not None and str(v).strip() != ""
-    except Exception:
-        return True
+    except Exception as e:
+        print(f"  ตรวจช่องสูตรไม่ได้: {e}")
+        return None
 
 
 def recalc(paths) -> bool:
@@ -124,10 +135,14 @@ def recalc(paths) -> bool:
                     # 1 ต.ค. 2569 07:59 สถานะบอกเสร็จ เซฟ ปิด แล้วคอลัมน์ หมวดหมู่เครื่อง
                     # ยังว่าง 46/46 ทั้งที่รอแล้ว — จึงต้อง "อ่านช่องจริง" ก่อนเซฟ
                     # ถ้ายังว่าง สั่งคำนวณใหม่แล้วรออีก ทำซ้ำได้ไม่กี่รอบ
-                    computed = True
+                    computed = True          # True = มีค่า, False = ว่าง, None = ตรวจไม่ได้
                     if os.path.basename(p) == os.path.basename(VERIFY[0]):
                         for round_ in range(1, 4):
-                            if _canary_filled(wb, VERIFY[1], VERIFY[2]):
+                            state = _canary_filled(wb, VERIFY[1], VERIFY[2])
+                            if state is None:
+                                computed = None      # ตรวจไม่ได้ ไม่มีประโยชน์จะคำนวณซ้ำ
+                                break
+                            if state:
                                 computed = True
                                 break
                             computed = False
@@ -141,8 +156,12 @@ def recalc(paths) -> bool:
                             time.sleep(2)
                     wb.Save()
                     wb.Close(False)
-                    if computed:
+                    if computed is True:
                         print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
+                    elif computed is None:
+                        ok = False
+                        print(f"  เซฟแล้ว แต่ยืนยันค่าในช่องสูตรไม่ได้ (ดูเหตุผลบรรทัดบน): "
+                              f"{os.path.basename(p)}")
                     else:
                         ok = False
                         print(f"  เซฟแล้วแต่ค่าในช่องสูตรยังว่าง: {os.path.basename(p)}")
