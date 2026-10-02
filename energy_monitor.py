@@ -27,6 +27,8 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import data_paths
+import solar_monitor_tab
 
 # ---------------------------------------------------------------------------
 # ตั้งค่าหน้าเพจ
@@ -621,6 +623,8 @@ def watch_data_files():
     """เช็คทุก 30 วินาที — ไฟล์ต้นทางบน OneDrive เปลี่ยนเมื่อไร รีเฟรชหน้าอัตโนมัติ"""
     paths = list(bill_paths.values()) + ([sub_path] if sub_path else []) + [OEE_FILE]
     sig = tuple(os.path.getmtime(p) if p and os.path.exists(p) else None for p in paths)
+    # parquet ของ Solar inverter เปลี่ยนทุกครั้งที่กด อัปเดต Solar.bat — ให้แท็บ Solar Monitor รีเฟรชเอง
+    sig += data_paths.solar_signature()
     prev = st.session_state.get("_energy_sig")
     st.session_state["_energy_sig"] = sig
     if prev is not None and sig != prev:
@@ -637,6 +641,11 @@ with st.sidebar:
         ok_lines.append(f"✓ มิเตอร์ย่อย {n_sub} จุด + Solar {n_sol} ชุด")
     if production is not None:
         ok_lines.append("✓ ผลผลิต (OEE)")
+    solar_last = solar_monitor_tab.last_date(data_paths.solar_signature())
+    if solar_last is not None:
+        ok_lines.append(f"✓ Solar inverter ถึง {solar_last:%d/%m/%Y}")
+    else:
+        load_errors.append("Solar inverter: ยังไม่มี parquet — ดึง EVE export แล้วกด อัปเดต Solar.bat")
     st.success("\n\n".join(ok_lines))
     if load_errors:
         st.warning("อ่านไม่ได้บางส่วน:\n\n" + "\n".join(f"- {e}" for e in load_errors))
@@ -725,11 +734,12 @@ def month_axis():
 # ---------------------------------------------------------------------------
 # แท็บหลัก
 # ---------------------------------------------------------------------------
-tab_over, tab_bill, tab_sub, tab_solar, tab_sim, tab_alert, tab_data = st.tabs([
+tab_over, tab_bill, tab_sub, tab_solar, tab_solar_mon, tab_sim, tab_alert, tab_data = st.tabs([
     ":material/factory: ภาพรวมพลังงาน",
     ":material/payments: บิล & ต้นทุน",
     ":material/electric_meter: มิเตอร์ย่อย",
     ":material/solar_power: Solar",
+    ":material/monitoring: Solar Monitor",
     ":material/science: Simulate Demand",
     ":material/notification_important: แจ้งเตือน",
     ":material/table_view: ข้อมูล",
@@ -1657,6 +1667,11 @@ with tab_solar:
                 f"คำนวณด้วย Grid Emission Factor ไทย {GRID_EF} kgCO₂e/kWh (อบก./TGO) — "
                 "เป็นตัวเลขประมาณการสำหรับรายงานภายใน/ESG เบื้องต้น ไม่ใช่ค่าที่ทวนสอบรับรองแล้ว"
             )
+
+# --- 4.2) Solar Monitor — ประสิทธิภาพราย inverter / ราย MPPT จาก EVE export ---
+# การแสดงผลทั้งหมดอยู่ใน solar_monitor_tab.py · สูตรและเกณฑ์อยู่ใน solar_etl.py
+with tab_solar_mon:
+    solar_monitor_tab.render(kpi_card)
 
 # --- 4.5) Simulate Demand — วิเคราะห์ + จำลองมาตรการลดค่าไฟ ---
 with tab_sim:

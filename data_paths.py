@@ -123,6 +123,63 @@ def workcenter_signature() -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# ข้อมูล Solar Inverter — ออกมาจาก solar_etl.py (ปุ่ม อัปเดต Solar.bat)
+# ---------------------------------------------------------------------------
+# โฟลเดอร์โครงการอยู่ลึก 2 ชั้นใต้โฟลเดอร์ฝ่าย จึงใช้ locate_dir() ตรง ๆ ไม่ได้
+# หาด้วยชื่อโฟลเดอร์ก่อน ถ้าถูกย้ายค่อยไล่หาโฟลเดอร์ชื่อลงท้ายด้วย "Solar" ใต้ชั้นที่สอง
+SOLAR_RAW_NAME = "01_ข้อมูลดิบ_Solar Cell"
+KNOWN_SOLAR_DIRS = (
+    r"0.1 Project_IE\1.โครงการบริหารพลังงาน Solar",
+)
+
+
+@functools.lru_cache(maxsize=1)
+def solar_project_dir() -> str:
+    """โฟลเดอร์โครงการบริหารพลังงาน Solar (มี 01_ข้อมูลดิบ_Solar Cell อยู่ข้างใน)"""
+    for c in KNOWN_SOLAR_DIRS:
+        d = os.path.join(DEPT_DIR, c)
+        if os.path.isdir(os.path.join(d, SOLAR_RAW_NAME)):
+            return d
+    for d in sorted(glob.glob(os.path.join(DEPT_DIR, "*", "*Solar*"))):
+        if os.path.isdir(os.path.join(d, SOLAR_RAW_NAME)):
+            return d
+    raise DataFolderNotFound(
+        "หาโฟลเดอร์โครงการ Solar ไม่เจอ\n\n"
+        f"มองหาโฟลเดอร์ย่อย: {SOLAR_RAW_NAME}\n"
+        f"ใต้: {DEPT_DIR}\\<โฟลเดอร์ใด ๆ>\\<โฟลเดอร์ชื่อมี Solar>\n"
+        f"ลองชื่อที่รู้จักแล้ว: {', '.join(KNOWN_SOLAR_DIRS)}\n\n"
+        "ถ้าเพิ่งย้ายโฟลเดอร์ ให้เพิ่มชื่อใหม่ใน KNOWN_SOLAR_DIRS ของ data_paths.py"
+    )
+
+
+def solar_raw_dir() -> str:
+    """โฟลเดอร์ที่วางไฟล์ EVE export: <นี่>\\<ปี พ.ศ.-เดือน-วัน>_EVE_Export\\*.xlsx"""
+    return os.path.join(solar_project_dir(), SOLAR_RAW_NAME)
+
+
+def solar_parquet_dir() -> str:
+    """โฟลเดอร์ parquet ที่ solar_etl.py เขียน — แดชบอร์ดอ่านจากที่นี่ที่เดียว"""
+    return os.path.join(solar_raw_dir(), "parquet")
+
+
+SOLAR_PARQUET_FILES = ("solar_readings.parquet", "solar_daily.parquet",
+                       "solar_profile15.parquet")
+
+
+def solar_signature() -> tuple:
+    """ลายเซ็นข้อมูล Solar — เปลี่ยนเมื่อ ETL รันใหม่ ใช้เป็นกุญแจแคชและตัวจับรีเฟรช"""
+    try:
+        d = solar_parquet_dir()
+    except DataFolderNotFound:
+        return ()
+    return tuple(
+        (f, round(os.path.getmtime(os.path.join(d, f)), 3)
+            if os.path.exists(os.path.join(d, f)) else 0)
+        for f in SOLAR_PARQUET_FILES
+    )
+
+
+# ---------------------------------------------------------------------------
 # ตรวจสุขภาพแหล่งข้อมูล — python data_paths.py
 # ---------------------------------------------------------------------------
 DATASETS = {
@@ -137,6 +194,9 @@ DATASETS = {
                       r"\งานระบบไฟฟ้า\Bill_33-5\2569\สรุปค่าไฟฟ้า 2569.xlsx"),
     "มิเตอร์ภายใน": (r"4.เรื่องการใช้ปริมาณไฟฟ้าภายในโรงงาน\งานระบบไฟฟ้าโรงงาน"
                      r"\ระบบไฟฟ้าภายใน\ETL"),
+    "Solar ข้อมูลดิบ EVE": os.path.join(KNOWN_SOLAR_DIRS[0], SOLAR_RAW_NAME),
+    "Solar parquet (ETL สร้าง)": os.path.join(KNOWN_SOLAR_DIRS[0], SOLAR_RAW_NAME,
+                                             "parquet", "solar_daily.parquet"),
 }
 
 REPAIR_FILES = (
