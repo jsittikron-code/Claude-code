@@ -9,6 +9,9 @@ solar_etl.py ไฟล์นี้มีแต่การแสดงผล ห
 
 from __future__ import annotations
 
+import time
+import traceback
+
 import altair as alt
 import numpy as np
 import pandas as pd
@@ -17,7 +20,7 @@ import streamlit as st
 import data_paths
 import solar_etl as se
 
-PERIODS = {"7 วัน": 7, "14 วัน": 14, "30 วัน": 30, "ทั้งหมด": None}
+PERIODS = {"รายวัน": 0, "7 วัน": 7, "14 วัน": 14, "30 วัน": 30, "ทั้งหมด": None}
 # สีประจำเครื่อง #1–#11 (คงที่ทุกกราฟ จะได้จำได้ว่าสีไหนเครื่องไหน)
 INV_COLORS = ["#f59e0b", "#3b82f6", "#ef4444", "#10b981", "#8b5cf6", "#ec4899",
               "#14b8a6", "#f97316", "#6366f1", "#84cc16", "#06b6d4"]
@@ -67,6 +70,67 @@ def _inv_scale(labels: list[str]) -> alt.Scale:
 
 
 # ---------------------------------------------------------------------------
+# ปุ่มอัปเดตในแดชบอร์ด — เรียก solar_etl.run_update() ตัวเดียวกับไอคอน อัปเดต Solar บนเดสก์ท็อป
+# ---------------------------------------------------------------------------
+UPDATE_HELP = ("ย้ายไฟล์ EVE ที่ดึงลง Downloads เข้าฐานข้อมูล แล้วคำนวณใหม่ทั้งหมด — "
+               "ทำงานเหมือนดับเบิลคลิกไอคอน อัปเดต Solar บนเดสก์ท็อป กดซ้ำได้ ข้อมูลไม่ซ้ำ")
+
+
+def _update_now() -> None:
+    """รันอัปเดตทันที แสดงความคืบหน้าบนหน้าจอ เก็บผลไว้ใน session แล้วรีเฟรชหน้า"""
+    lines: list[str] = []
+    flog = se.FileLog()
+    with st.status("กำลังอัปเดตข้อมูล Solar จาก Downloads ...", expanded=True) as box:
+        ph = st.empty()
+
+        def out(s: str = "") -> None:
+            flog(str(s))
+            lines.extend(str(s).split("\n"))
+            ph.code("\n".join(lines[-25:]), language=None)
+
+        t0 = time.time()
+        try:
+            with se.update_lock():
+                code = se.run_update(out=out)
+        except se.UpdateBusy as e:
+            out(f"*** {e}")
+            code = 1
+        except Exception:
+            out(traceback.format_exc())
+            code = 1
+        finally:
+            flog.close()
+        box.update(label="อัปเดตเสร็จ" if code == 0 else "อัปเดตไม่สำเร็จ",
+                   state="complete" if code == 0 else "error", expanded=False)
+    st.session_state["solar_last_update"] = {
+        "when": pd.Timestamp.now(), "code": code, "secs": time.time() - t0,
+        "log": "\n".join(lines), "path": flog.path,
+    }
+    st.rerun()          # โหลด parquet ชุดใหม่ (ลายเซ็นไฟล์เปลี่ยน → แคชเดิมไม่ถูกใช้)
+
+
+def _last_update_panel() -> None:
+    """ผลการกดอัปเดตครั้งล่าสุดของผู้ใช้คนนี้ — สรุปสั้น ๆ + log เต็มให้กางดู"""
+    res = st.session_state.get("solar_last_update")
+    if not res:
+        return
+    key_lines = [ln.strip() for ln in res["log"].splitlines()
+                 if ln.strip().startswith(("แถวในฐาน", "ข้อมูลตั้งแต่", "ผลผลิตวัน", "***", "ย้าย"))]
+    msg = (f"อัปเดตเมื่อ {res['when']:%H:%M:%S} ({res['secs']:.0f} วินาที) — "
+           + " · ".join(k for k in key_lines if not k.startswith("ย้าย")))
+    n_moved = sum(1 for k in key_lines if k.startswith("ย้าย"))
+    if n_moved:
+        msg += f" · ย้ายไฟล์ใหม่ {n_moved} ไฟล์"
+    # แดง = ล้ม · เหลือง = สำเร็จแต่มีเรื่องต้องดู (ไม่มีไฟล์ใหม่ / ข้อมูลยังไม่ถึงวันนี้) · เขียว = เรียบร้อย
+    show = (st.error if res["code"] != 0 else
+            st.warning if any(k.startswith("***") for k in key_lines) else st.success)
+    show(msg, icon=":material/sync:")
+    with st.expander("ดูรายละเอียดการอัปเดตครั้งล่าสุด"):
+        st.code(res["log"], language=None)
+        st.caption(f"บันทึกไว้ที่ {res['path']}")
+
+
+# ---------------------------------------------------------------------------
 # หน้าแท็บ
 # ---------------------------------------------------------------------------
 def render(kpi_card) -> None:
@@ -76,26 +140,44 @@ def render(kpi_card) -> None:
             "ยังไม่มีข้อมูล Solar inverter ในระบบ\n\n"
             "1. ดึงรายงาน **รายการละเอียดแต่ละรายการ** ของอินเวอร์เตอร์ทั้ง 11 ตัวจากเว็บ EVE "
             "(ไฟล์จะลงใน Downloads)\n"
-            "2. ดับเบิลคลิก **อัปเดต Solar.bat** ในโฟลเดอร์แดชบอร์ด — หน้านี้จะแสดงผลเองภายใน ~30 วินาที"
+            "2. กดปุ่ม **อัปเดต Solar** ด้านล่าง หรือดับเบิลคลิกไอคอน **อัปเดต Solar** บนเดสก์ท็อป"
         )
+        if st.button(":material/sync: อัปเดต Solar", type="primary", key="solar_update_empty", help=UPDATE_HELP):
+            _update_now()
+        _last_update_panel()
         return
     daily_all, prof_all = _load(sig)
     last = daily_all["date"].max()
     last_ts = daily_all["last_ts"].max()
+    all_dates = sorted(daily_all["date"].unique(), reverse=True)
 
-    # ---- ตัวเลือกช่วงเวลา + เป้า ----
+    # ---- ปุ่มอัปเดต + ตัวเลือกช่วงเวลา + เป้า ----
     with st.container(horizontal=True, vertical_alignment="center"):
+        if st.button(":material/sync: อัปเดต Solar", type="primary", key="solar_update_btn", help=UPDATE_HELP):
+            _update_now()
         period = st.segmented_control("ช่วงเวลา", list(PERIODS), default="30 วัน",
                                       key="solar_period") or "30 วัน"
+        if PERIODS[period] == 0:
+            pick = st.selectbox("วันที่", all_dates, key="solar_pick_day",
+                                format_func=lambda x: pd.Timestamp(x).strftime("%d/%m/%Y (%a)"))
         target_name = st.selectbox("เป้าผลผลิตต่อวัน", list(se.TARGET_KWH_DAY), index=1,
                                    key="solar_target")
         st.caption(f"ข้อมูล EVE ล่าสุด {last_ts:%d/%m/%Y %H:%M} · "
                    f"อินเวอร์เตอร์ {se.N_INVERTERS} ชุด × {se.RATED_KW:.0f} kW · {se.KWP_TOTAL:,.0f} kWp")
+    _last_update_panel()
     days_back = PERIODS[period]
-    start = (last - pd.Timedelta(days=days_back - 1)) if days_back else daily_all["date"].min()
-    start = max(start, daily_all["date"].min())      # ข้อมูลเริ่มหลังช่วงที่ขอ ให้โชว์วันแรกที่มีจริง
-    daily = daily_all[daily_all["date"] >= start].copy()
-    prof = prof_all[prof_all["date"] >= start].copy()
+    single = days_back == 0                            # โหมดรายวัน — ทุกส่วนของแท็บแสดงวันเดียว
+    if single:
+        start = end = pd.Timestamp(pick)
+    else:
+        end = last
+        start = (last - pd.Timedelta(days=days_back - 1)) if days_back else daily_all["date"].min()
+        start = max(start, daily_all["date"].min())  # ข้อมูลเริ่มหลังช่วงที่ขอ ให้โชว์วันแรกที่มีจริง
+    daily = daily_all[daily_all["date"].between(start, end)].copy()
+    prof = prof_all[prof_all["date"].between(start, end)].copy()
+    # กราฟรายวัน/เจาะรายเครื่องในโหมดรายวัน: แสดง 14 วันย้อนหลังถึงวันที่เลือก เห็นแนวโน้มรอบ ๆ วันนั้น
+    trend = (daily_all[daily_all["date"].between(end - pd.Timedelta(days=13), end)].copy()
+             if single else daily)
     target = se.TARGET_KWH_DAY[target_name]
     labels = _inv_labels(daily_all)
     inv_scale = _inv_scale(labels)
@@ -107,12 +189,14 @@ def render(kpi_card) -> None:
     ac_total, dc_total = sys_day["ac_kwh"].sum(), sys_day["dc_kwh"].sum()
     # วันล่าสุดที่ดึง export ระหว่างวัน (ยังไม่ครบวัน) ไม่เอามานับค่าเฉลี่ย/ถึงเป้า/ดีสุด-แย่สุด
     # ไม่งั้นทุกครั้งที่กดอัปเดตตอนสาย ค่าเฉลี่ยจะดิ่งและ "แย่สุด" จะชี้วันนี้เสมอ
-    partial = se.partial_last_day(daily_all)
-    full_day = sys_day[sys_day["date"] != last] if partial is not None else sys_day
+    # โหมดรายวันไม่ตัดทิ้ง (ผู้ใช้เลือกดูวันนั้นเอง) แต่ยังบอกว่าไม่ครบวัน
+    partial = se.partial_last_day(daily_all) if end == last else None
+    full_day = sys_day[sys_day["date"] != last] if (partial is not None and not single) else sys_day
     n_full = len(full_day)
     avg_day = full_day["ac_kwh"].sum() / n_full if n_full else 0
-    partial_note = (f" · ไม่นับ {_fmt_date(last)} (ข้อมูลถึง {partial:%H:%M} ยังไม่ครบวัน)"
-                    if partial is not None else "")
+    partial_note = ("" if partial is None else
+                    f" · ข้อมูลถึง {partial:%H:%M} ยังไม่ครบวัน" if single else
+                    f" · ไม่นับ {_fmt_date(last)} (ข้อมูลถึง {partial:%H:%M} ยังไม่ครบวัน)")
     peak = sys_slot.loc[sys_slot["pac_mean"].idxmax()] if not sys_slot.empty else None
     summ = se.inverter_summary(daily)
     al = se.alerts(daily)
@@ -121,10 +205,12 @@ def render(kpi_card) -> None:
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     with k1:
         kpi_card("ผลิตได้ (AC)", f"{ac_total:,.0f} kWh", COLOR_SOLAR,
-                 f"{n_days} วัน · {_fmt_date(start)} – {_fmt_date(last)}")
+                 f"วันที่ {_fmt_date(start)}" if single else
+                 f"{n_days} วัน · {_fmt_date(start)} – {_fmt_date(end)}")
     with k2:
         pct = avg_day / target * 100 if target else 0
-        kpi_card("เฉลี่ยต่อวัน", f"{avg_day:,.0f} kWh", COLOR_COST if pct >= 100 else COLOR_ALERT,
+        kpi_card("ผลิตวันนั้น" if single else "เฉลี่ยต่อวัน", f"{avg_day:,.0f} kWh",
+                 COLOR_COST if pct >= 100 else COLOR_ALERT,
                  f"{pct:.0f}% ของเป้า {target:,.0f} kWh ({target_name}){partial_note}")
     with k3:
         kpi_card("Specific yield", f"{avg_day / se.KWP_TOTAL:.2f} kWh/kWp/วัน", COLOR_GRID2,
@@ -150,13 +236,17 @@ def render(kpi_card) -> None:
     col_l, col_r = st.columns([3, 2])
     with col_l:
         with st.container(border=True, key="solar_daily_card"):
-            st.subheader("ผลผลิตรายวัน แยกตามอินเวอร์เตอร์ (AC kWh)")
-            d = daily.merge(sys_day.rename(columns={"ac_kwh": "รวมทั้งระบบ"})[["date", "รวมทั้งระบบ"]], on="date")
+            st.subheader("ผลผลิตรายวัน แยกตามอินเวอร์เตอร์ (AC kWh)"
+                         + (f" · 14 วันถึง {_fmt_date(end)}" if single else ""))
+            tr_day = trend.groupby("date", as_index=False)["ac_kwh"].sum().rename(columns={"ac_kwh": "รวมทั้งระบบ"})
+            d = trend.merge(tr_day, on="date")
             d["สัดส่วน"] = d["ac_kwh"] / d["รวมทั้งระบบ"] * 100
+            d["เลือก"] = (d["date"] == end) if single else True
             bars = (
                 alt.Chart(d)
                 .mark_bar()
                 .encode(
+                    opacity=alt.condition(alt.datum["เลือก"], alt.value(1.0), alt.value(0.35)),
                     x=alt.X("date:T", title="วันที่", axis=alt.Axis(format="%d/%m", labelAngle=0)),
                     y=alt.Y("ac_kwh:Q", title="kWh"),
                     color=alt.Color("เครื่อง:N", scale=inv_scale, title="อินเวอร์เตอร์",
@@ -189,11 +279,19 @@ def render(kpi_card) -> None:
     with col_r:
         with st.container(border=True, key="solar_profile_card"):
             st.subheader("โปรไฟล์กำลังผลิต ราย 15 นาที")
-            dates = sorted(daily["date"].unique(), reverse=True)
-            sel_day = st.selectbox("วัน", dates, format_func=lambda x: pd.Timestamp(x).strftime("%d/%m/%Y (%a)"),
-                                   key="solar_profile_day", label_visibility="collapsed")
-            mean_prof = (sys_slot.groupby("tod", as_index=False)["pac_mean"].mean()
-                         .rename(columns={"pac_mean": "kW"}).assign(ชนิด=f"เฉลี่ย {n_days} วัน"))
+            if single:                     # วันที่เลือกด้านบนแล้ว เทียบกับเฉลี่ย 14 วันก่อนหน้า
+                sel_day = end
+                cmp_prof = prof_all[prof_all["date"].between(end - pd.Timedelta(days=13), end)]
+                cmp_slot = cmp_prof.groupby(["date", "slot", "tod"], as_index=False)["pac_mean"].sum()
+                cmp_label = f"เฉลี่ย {cmp_slot['date'].nunique()} วันถึง {_fmt_date(end)}"
+                st.caption(f"วันที่ {_fmt_date(end)} (เปลี่ยนวันที่ที่ตัวเลือกด้านบน)")
+            else:
+                dates = sorted(daily["date"].unique(), reverse=True)
+                sel_day = st.selectbox("วัน", dates, format_func=lambda x: pd.Timestamp(x).strftime("%d/%m/%Y (%a)"),
+                                       key="solar_profile_day", label_visibility="collapsed")
+                cmp_slot, cmp_label = sys_slot, f"เฉลี่ย {n_days} วัน"
+            mean_prof = (cmp_slot.groupby("tod", as_index=False)["pac_mean"].mean()
+                         .rename(columns={"pac_mean": "kW"}).assign(ชนิด=cmp_label))
             day_prof = (sys_slot[sys_slot["date"] == sel_day][["tod", "pac_mean"]]
                         .rename(columns={"pac_mean": "kW"}).assign(ชนิด=_fmt_date(sel_day)))
             x = alt.X("tod:Q", title="เวลา", scale=alt.Scale(domain=[5, 19.5]),
@@ -217,7 +315,8 @@ def render(kpi_card) -> None:
 
     # ---- ตารางสรุปรายเครื่อง ----
     with st.container(border=True, key="solar_inv_table"):
-        st.subheader(f"สรุปรายอินเวอร์เตอร์ — {_fmt_date(start)} ถึง {_fmt_date(last)}")
+        st.subheader(f"สรุปรายอินเวอร์เตอร์ — วันที่ {_fmt_date(start)}" if single else
+                     f"สรุปรายอินเวอร์เตอร์ — {_fmt_date(start)} ถึง {_fmt_date(end)}")
         show = summ[["inv_no", "sn", "ac_kwh", "avg_kwh", "best_kwh", "best_date", "worst_kwh", "worst_date",
                      "pac_max", "cf_pct", "eff_pct", "mppt_best", "mppt_worst", "mppt_min_ratio",
                      "coverage_pct", "outage_days", "outage_min", "n_fault", "curtail_days", "status", "fw"]].copy()
@@ -265,12 +364,23 @@ def render(kpi_card) -> None:
             "แถวสีแดง = มีเรื่องให้ตรวจ (ดูรายละเอียดด้านล่าง)"
         )
 
-    # ---- ราย MPPT: heatmap + สุขภาพสตริง ----
+    # ---- ราย MPPT: heatmap + สุขภาพสตริง (ดูทั้งช่วง หรือเลือกดูทีละวัน) ----
+    if single:                                         # โหมดรายวัน — ใช้วันที่เลือกด้านบนอยู่แล้ว
+        md, md_label = daily, _fmt_date(end)
+    else:
+        whole = f"ทั้งช่วง ({period})"
+        day_opts = [whole] + sorted(daily["date"].unique(), reverse=True)
+        mppt_day = st.selectbox(
+            "ดูราย MPPT ของ", day_opts, key="solar_mppt_day",
+            format_func=lambda x: x if isinstance(x, str) else pd.Timestamp(x).strftime("วันที่ %d/%m/%Y (%a)"),
+            help="ทั้งช่วง = รวมทุกวันในช่วงที่เลือกด้านบน · เลือกวันเดียวเพื่อดูว่า MPPT ไหนเริ่มตกวันไหน")
+        md = daily if isinstance(mppt_day, str) else daily[daily["date"] == mppt_day]
+        md_label = period if isinstance(mppt_day, str) else _fmt_date(mppt_day)
     col_l2, col_r2 = st.columns([3, 2])
     with col_l2:
         with st.container(border=True, key="solar_mppt_heat"):
-            st.subheader("ราย MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่อง (%)")
-            hm = se.mppt_table(daily).rename(columns={"mppt": "MPPT"})
+            st.subheader(f"ราย MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่อง (%) · {md_label}")
+            hm = se.mppt_table(md).rename(columns={"mppt": "MPPT"})
             hm["เทียบเฉลี่ย"] = hm["ratio"] * 100
             hm["เครื่อง"] = "#" + hm["inv_no"].astype(str)
             base = alt.Chart(hm).encode(
@@ -295,8 +405,8 @@ def render(kpi_card) -> None:
                        "เพราะแบบติดตั้งต่อ MPPT 5/6 สตริงเดียว ถ้าเทียบ kWh ตรง ๆ จะฟ้องผิดทุกเครื่อง")
     with col_r2:
         with st.container(border=True, key="solar_string_health"):
-            st.subheader("สุขภาพสตริง — Vdc กลางวัน (V)")
-            sh = se.string_health(daily)
+            st.subheader(f"สุขภาพสตริง — Vdc กลางวัน (V) · {md_label}")
+            sh = se.string_health(md)
             if sh.empty:
                 st.info("ยังไม่มีค่ากลางวันพอสำหรับคำนวณ")
             else:
@@ -324,7 +434,34 @@ def render(kpi_card) -> None:
         sel = st.selectbox("อินเวอร์เตอร์", opts["sn"].tolist(),
                            format_func=lambda s: f"#{int(opts.loc[opts['sn'] == s, 'inv_no'].iloc[0])}  SN {s}",
                            key="solar_detail_sn")
-        g = daily[daily["sn"] == sel].sort_values("date")
+        g = trend[trend["sn"] == sel].sort_values("date")
+        if single:
+            st.caption(f"แสดง 14 วันถึง {_fmt_date(end)} เพื่อให้เห็นแนวโน้มรอบวันที่เลือก")
+
+        # วัน × MPPT — พลังงานต่อสตริงเทียบค่าเฉลี่ยของเครื่องในวันนั้น (เห็นว่า MPPT ไหนเริ่มตกวันไหน)
+        dm = se.mppt_daily(g)
+        if not dm.empty:
+            dm["เทียบเฉลี่ย"] = dm["ratio"] * 100
+            dm["วันที่"] = dm["date"].dt.strftime("%d/%m")
+            day_sort = list(dict.fromkeys(dm.sort_values("date", ascending=False)["วันที่"]))
+            base = alt.Chart(dm).encode(
+                x=alt.X("mppt:O", title="MPPT"),
+                y=alt.Y("วันที่:N", sort=day_sort, title=None),
+                tooltip=[alt.Tooltip("date:T", title="วันที่", format="%d/%m/%Y"), alt.Tooltip("mppt:O", title="MPPT"),
+                         alt.Tooltip("e_kwh:Q", title="พลังงาน DC (kWh)", format=",.1f"),
+                         alt.Tooltip("n_str:Q", title="จำนวนสตริง"),
+                         alt.Tooltip("เทียบเฉลี่ย:Q", title="เทียบเฉลี่ยต่อสตริง (%)", format=".0f"),
+                         alt.Tooltip("vdc_mid:Q", title="Vdc กลางวัน (V)", format=".0f")])
+            heat = base.mark_rect().encode(color=alt.Color(
+                "เทียบเฉลี่ย:Q", title="% ของเฉลี่ย",
+                scale=alt.Scale(scheme="redyellowgreen", domain=[50, 120], clamp=True)))
+            lbl = base.mark_text(fontSize=11).encode(
+                text=alt.Text("เทียบเฉลี่ย:Q", format=".0f"),
+                color=alt.condition(alt.datum["เทียบเฉลี่ย"] < 70, alt.value("white"), alt.value("#0f172a")))
+            st.altair_chart((heat + lbl).properties(
+                height=max(160, 22 * len(day_sort)),
+                title="รายวัน × MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่องในวันนั้น (%)"), width="stretch")
+
         ml = g.melt(id_vars=["date"], value_vars=se.E_COLS, var_name="mppt", value_name="kWh")
         ml["MPPT"] = "MPPT " + ml["mppt"].str[1]
         vl = g.melt(id_vars=["date"], value_vars=[f"vdc{i}_mid" for i in se.MPPT], var_name="mppt", value_name="Vdc")
@@ -394,12 +531,12 @@ def render(kpi_card) -> None:
     with st.container(horizontal=True):
         st.download_button(
             "⬇️ CSV รายวัน × รายเครื่อง", daily.drop(columns=["เครื่อง"]).to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"solar_daily_{_fmt_date(start).replace('/', '')}_{_fmt_date(last).replace('/', '')}.csv",
+            file_name=f"solar_daily_{_fmt_date(start).replace('/', '')}_{_fmt_date(end).replace('/', '')}.csv",
             mime="text/csv", key="solar_dl_daily")
         mp = daily.melt(id_vars=["date", "inv_no", "sn"], value_vars=se.E_COLS, var_name="mppt", value_name="kwh_dc")
         mp["mppt"] = mp["mppt"].str[1].astype(int)
         st.download_button(
             "⬇️ CSV รายวัน × ราย MPPT", mp.sort_values(["date", "inv_no", "mppt"]).to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"solar_mppt_daily_{_fmt_date(start).replace('/', '')}_{_fmt_date(last).replace('/', '')}.csv",
+            file_name=f"solar_mppt_daily_{_fmt_date(start).replace('/', '')}_{_fmt_date(end).replace('/', '')}.csv",
             mime="text/csv", key="solar_dl_mppt")
         st.caption("อัปเดตข้อมูล: ดึง EVE export ลง Downloads แล้วดับเบิลคลิก อัปเดต Solar.bat")

@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import glob
 import json
@@ -601,6 +602,15 @@ def mppt_table(daily: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(recs).sort_values(["inv_no", "mppt"]).reset_index(drop=True)
 
 
+def mppt_daily(daily: pd.DataFrame) -> pd.DataFrame:
+    """ตารางราย MPPT แยกรายวัน (date, sn, mppt, ratio, vdc_ratio ...) — คิดแบบ mppt_table() ทีละวัน
+    จำนวนสตริงยังมาจากประวัติทั้งหมด (คอลัมน์ nstr*) วันเดียวจึงเทียบกันได้ตรง"""
+    if daily.empty:
+        return pd.DataFrame()
+    parts = [mppt_table(g).assign(date=d) for d, g in daily.groupby("date")]
+    return pd.concat(parts, ignore_index=True)
+
+
 def inverter_summary(daily: pd.DataFrame) -> pd.DataFrame:
     """ตารางสรุปรายเครื่องของช่วงที่ส่งเข้ามา — เทียบเท่าชีต Summary ของ Report&EE_DATA
     (ต่างตรงที่เทียบ MPPT แบบ "ต่อสตริง" ดูคำอธิบายที่ STRINGS_2_RATIO)"""
@@ -775,6 +785,163 @@ def _start_log() -> str:
     return path
 
 
+# ===========================================================================
+# ขั้นตอนอัปเดตทั้งชุด — ปุ่ม อัปเดต Solar.bat และปุ่มในแดชบอร์ดเรียกฟังก์ชันเดียวกันนี้
+# ===========================================================================
+LOCK_PATH = os.path.join(HERE, "logs", "_solar_update.lock")
+LOCK_STALE_SEC = 15 * 60    # ล็อกค้างนานกว่านี้ = รอบก่อนถูกปิดกลางคัน ปลดให้อัตโนมัติ
+
+
+class UpdateBusy(RuntimeError):
+    """มีการอัปเดตอีกรอบกำลังทำงานอยู่ (กดซ้ำ / กดทั้งไอคอนและปุ่มในแดชบอร์ดพร้อมกัน)"""
+
+
+@contextlib.contextmanager
+def update_lock():
+    """กันสองรอบเขียน parquet ชนกัน — ไอคอนบนเดสก์ท็อปกับปุ่มในแดชบอร์ดอยู่คนละโปรเซส"""
+    os.makedirs(os.path.dirname(LOCK_PATH), exist_ok=True)
+    if os.path.exists(LOCK_PATH) and time.time() - os.path.getmtime(LOCK_PATH) > LOCK_STALE_SEC:
+        try:
+            os.remove(LOCK_PATH)
+        except OSError:
+            pass
+    try:
+        fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        try:
+            with open(LOCK_PATH, encoding="utf-8") as f:
+                who = f.read().strip()
+        except OSError:
+            who = ""
+        raise UpdateBusy(f"มีการอัปเดต Solar กำลังทำงานอยู่ ({who}) — รอให้เสร็จก่อนแล้วกดใหม่")
+    try:
+        os.write(fd, f"เริ่ม {time.strftime('%H:%M:%S')} pid {os.getpid()}".encode("utf-8"))
+        os.close(fd)
+        yield
+    finally:
+        try:
+            os.remove(LOCK_PATH)
+        except OSError:
+            pass
+
+
+def run_update(rebuild: bool = False, check: bool = False, out=print) -> int:
+    """ทำครบ 4 ขั้น แล้วคืนรหัสผล 0 = สำเร็จ · 1 = ผิดพลาด · 2 = ยังไม่มีข้อมูลในฐานเลย
+
+    out คือฟังก์ชันรับข้อความทีละบรรทัด — .bat ส่ง print, แดชบอร์ดส่งตัวที่เขียนลงหน้าจอ
+    """
+    def head_(text):
+        out("\n" + LINE + "\n  " + text + "\n" + LINE)
+
+    try:
+        raw = data_paths.solar_raw_dir()
+    except data_paths.DataFolderNotFound as e:
+        out(f"\n{e}")
+        return 1
+    out(f"  โฟลเดอร์ข้อมูลดิบ: {raw}")
+
+    head_("ขั้น 1/4  ย้ายไฟล์ EVE จาก Downloads เข้าโฟลเดอร์ลงวันที่")
+    p = prepare(dry_run=check)
+    for d in p["moved"]:
+        out(f"  ย้าย  {os.path.relpath(d, raw)}")
+    for d in p["copies"]:
+        out(f"  เก็บเป็นสำเนา {os.path.relpath(d, raw)}  (ชื่อซ้ำแต่เนื้อหาต่าง — ไม่ทับของเดิม)")
+    for d in p["failed"]:
+        out(f"  *** ย้ายไม่ได้ {d} — ปล่อยไว้ใน Downloads รอบหน้าจะลองใหม่")
+    if p["duplicate"]:
+        out(f"  ซ้ำกับที่มีอยู่แล้ว {p['duplicate']} ไฟล์ — ปล่อยไว้ใน Downloads")
+    if not p["moved"] and not p["copies"]:
+        out("  ไม่มีไฟล์ใหม่ใน Downloads — เดินต่อเผื่อมีไฟล์ในโฟลเดอร์ที่ยังไม่ได้อ่าน")
+
+    head_("ขั้น 2/4  อ่านไฟล์ที่ยังไม่เคยอ่าน → solar_readings.parquet")
+    try:
+        s = ingest(rebuild=rebuild, dry_run=check, log=out)
+    except Exception as e:
+        out(f"\n  อ่านข้อมูลไม่สำเร็จ: {e}")
+        return 1
+    out(f"  ไฟล์ดิบทั้งหมด {s['files_total']} ไฟล์ · ต้องอ่านรอบนี้ {s['files_new']} ไฟล์")
+    if check:
+        for r in s.get("todo", []):
+            out(f"    - {r}")
+        out("\n  (โหมดตรวจ จบแค่นี้)")
+        return 0
+    for e in s["errors"]:
+        out(f"  *** {e}")
+    added = s["rows_after"] - s["rows_before"]
+    out(f"  แถวในฐาน {s['rows_before']:,} → {s['rows_after']:,}  (เพิ่ม {added:,} แถว)")
+    if s["files_new"] == 0:
+        out("\n  *** ไม่มีไฟล์ใหม่เลย — ถ้าเพิ่งดึงจาก EVE ให้ตรวจว่าไฟล์ลง Downloads จริง"
+            " และชื่อไฟล์ขึ้นต้นด้วย อินเวอร์เตอร์<SN>-รายการละเอียดแต่ละรายการ- ***")
+
+    head_("ขั้น 3/4  สรุปรายวัน (ราย inverter / ราย MPPT) + โปรไฟล์ 15 นาที")
+    rd_path = os.path.join(data_paths.solar_parquet_dir(), READINGS)
+    if not os.path.exists(rd_path):
+        out("  ยังไม่มีข้อมูลในฐานเลย — วางไฟล์ EVE แล้วรันใหม่")
+        return 2
+    t0 = time.time()
+    df = pd.read_parquet(rd_path)
+    daily, prof = summarize(df)
+    write_summaries(daily, prof)
+    out(f"  รายวัน {len(daily):,} แถว (เครื่อง×วัน) · โปรไฟล์ {len(prof):,} แถว"
+        f" · ใช้เวลา {time.time() - t0:.0f} วินาที")
+
+    head_("ขั้น 4/4  ผลล่าสุด")
+    last = daily["date"].max()
+    span = (daily["date"].max() - daily["date"].min()).days + 1
+    newest = df["ts"].max()
+    out(f"  ข้อมูลตั้งแต่ {daily['date'].min():%d/%m/%Y} ถึง {last:%d/%m/%Y}  ({span} วัน)"
+        f"  ล่าสุด {newest:%d/%m/%Y %H:%M}")
+    gap_days = (dt.date.today() - newest.date()).days
+    if gap_days >= 1:
+        out(f"\n  *** ข้อมูลล่าสุดถึง {newest:%d/%m/%Y} — ยังขาด {gap_days} วันถึงวันนี้ ***\n"
+            "      ตอนดึงรายงานในเว็บ EVE ให้เลือกช่วงวันที่ให้ถึงวันนี้"
+            " (ไฟล์ที่ได้มีข้อมูลเฉพาะช่วงวันที่ที่เลือกไว้)")
+    ld = daily[daily["date"] == last].sort_values("inv_no")
+    out(f"\n  ผลผลิตวัน {last:%d/%m/%Y}  รวม {ld['ac_kwh'].sum():,.0f} kWh"
+        f"  (เป้าฤดูฝน {TARGET_KWH_DAY['ฤดูฝน (PSH 4.0)']:,.0f} · ปกติ {TARGET_KWH_DAY['ปกติ (PSH 4.5)']:,.0f})")
+    pl = partial_last_day(daily)
+    if pl is not None:
+        out(f"  (วันนี้ยังไม่ครบวัน — ข้อมูลถึง {pl:%H:%M} น. แดชบอร์ดจะไม่นับวันนี้ในค่าเฉลี่ย/เป้า"
+            " ดึง export ใหม่หลัง 18:30 แล้วกดอัปเดตอีกครั้งจะได้ยอดเต็มวัน)")
+    if len(ld) < N_INVERTERS:
+        lack = sorted(set(INVERTER_NO) - set(ld["sn"]), key=INVERTER_NO.get)
+        out(f"  *** วันนี้มีข้อมูลแค่ {len(ld)} จาก {N_INVERTERS} เครื่อง — ขาด "
+            + ", ".join(f"#{INVERTER_NO[s]} ({s})" for s in lack) + " ***")
+    for r in ld.itertuples():
+        flag = ""
+        if r.outage_min > 0:
+            flag += f"  หยุดกลางวัน {r.outage_min} นาที"
+        if r.n_fault > 0:
+            flag += f"  fault {r.n_fault} เฟรม"
+        out(f"    #{int(r.inv_no):>2}  SN {r.sn}  {r.ac_kwh:>7,.0f} kWh  สูงสุด {r.pac_max:>5.0f} kW"
+            f"  ข้อมูล {r.coverage_pct:>3.0f}%{flag}")
+    al = alerts(daily[daily["date"] >= last - pd.Timedelta(days=6)])
+    if al:
+        out(f"\n  สิ่งที่ต้องตรวจ (7 วันล่าสุด) {len(al)} รายการ:")
+        for x in al:
+            out(f"    [{x['level']}] {x['text']}")
+    else:
+        out("\n  7 วันล่าสุดไม่พบความผิดปกติ")
+    out("\n  แดชบอร์ดพอร์ต 8504 แท็บ Solar Monitor จะเห็นข้อมูลใหม่ภายใน ~30 วินาที")
+    return 0
+
+
+class FileLog:
+    """เขียนบรรทัดลงไฟล์ log ใน logs\\ — ใช้กับปุ่มในแดชบอร์ด (หน้าเว็บปิดแล้วยังย้อนดูได้)"""
+
+    def __init__(self, prefix: str = "solar_web"):
+        os.makedirs(LOG_DIR, exist_ok=True)
+        self.path = os.path.join(LOG_DIR, time.strftime(f"{prefix}_%Y%m%d_%H%M%S.log"))
+        self._f = open(self.path, "a", encoding="utf-8")
+
+    def __call__(self, s: str = "") -> None:
+        self._f.write(s + "\n")
+        self._f.flush()
+
+    def close(self) -> None:
+        self._f.close()
+
+
 def main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="อัปเดตข้อมูล Solar Inverter จาก EVE export")
@@ -786,96 +953,17 @@ def main(argv=None) -> int:
     head("อัปเดตข้อมูล Solar Inverter (EVE → แดชบอร์ด 8504)")
     print(f"  {time.strftime('%Y-%m-%d %H:%M:%S')}"
           + (f"  บันทึกผลรอบนี้ไว้ที่ {log_path}" if log_path else "  (โหมดตรวจ ไม่เขียนไฟล์)"))
-    try:
-        raw = data_paths.solar_raw_dir()
-    except data_paths.DataFolderNotFound as e:
-        print(f"\n{e}")
-        return 1
-    print(f"  โฟลเดอร์ข้อมูลดิบ: {raw}")
-
-    head("ขั้น 1/4  ย้ายไฟล์ EVE จาก Downloads เข้าโฟลเดอร์ลงวันที่")
-    p = prepare(dry_run=a.check)
-    for d in p["moved"]:
-        print(f"  ย้าย  {os.path.relpath(d, raw)}")
-    for d in p["copies"]:
-        print(f"  เก็บเป็นสำเนา {os.path.relpath(d, raw)}  (ชื่อซ้ำแต่เนื้อหาต่าง — ไม่ทับของเดิม)")
-    for d in p["failed"]:
-        print(f"  *** ย้ายไม่ได้ {d} — ปล่อยไว้ใน Downloads รอบหน้าจะลองใหม่")
-    if p["duplicate"]:
-        print(f"  ซ้ำกับที่มีอยู่แล้ว {p['duplicate']} ไฟล์ — ปล่อยไว้ใน Downloads")
-    if not p["moved"] and not p["copies"]:
-        print("  ไม่มีไฟล์ใหม่ใน Downloads — เดินต่อเผื่อมีไฟล์ในโฟลเดอร์ที่ยังไม่ได้อ่าน")
-
-    head("ขั้น 2/4  อ่านไฟล์ที่ยังไม่เคยอ่าน → solar_readings.parquet")
-    try:
-        s = ingest(rebuild=a.rebuild, dry_run=a.check)
-    except Exception as e:
-        print(f"\n  อ่านข้อมูลไม่สำเร็จ: {e}")
-        return 1
-    print(f"  ไฟล์ดิบทั้งหมด {s['files_total']} ไฟล์ · ต้องอ่านรอบนี้ {s['files_new']} ไฟล์")
     if a.check:
-        for r in s.get("todo", []):
-            print(f"    - {r}")
-        print("\n  (โหมดตรวจ จบแค่นี้)")
-        return 0
-    for e in s["errors"]:
-        print(f"  *** {e}")
-    added = s["rows_after"] - s["rows_before"]
-    print(f"  แถวในฐาน {s['rows_before']:,} → {s['rows_after']:,}  (เพิ่ม {added:,} แถว)")
-    if s["files_new"] == 0:
-        print("\n  *** ไม่มีไฟล์ใหม่เลย — ถ้าเพิ่งดึงจาก EVE ให้ตรวจว่าไฟล์ลง Downloads จริง"
-              " และชื่อไฟล์ขึ้นต้นด้วย อินเวอร์เตอร์<SN>-รายการละเอียดแต่ละรายการ- ***")
-
-    head("ขั้น 3/4  สรุปรายวัน (ราย inverter / ราย MPPT) + โปรไฟล์ 15 นาที")
-    rd_path = os.path.join(data_paths.solar_parquet_dir(), READINGS)
-    if not os.path.exists(rd_path):
-        print("  ยังไม่มีข้อมูลในฐานเลย — วางไฟล์ EVE แล้วรันใหม่")
-        return 2
-    t0 = time.time()
-    df = pd.read_parquet(rd_path)
-    daily, prof = summarize(df)
-    write_summaries(daily, prof)
-    print(f"  รายวัน {len(daily):,} แถว (เครื่อง×วัน) · โปรไฟล์ {len(prof):,} แถว"
-          f" · ใช้เวลา {time.time() - t0:.0f} วินาที")
-
-    head("ขั้น 4/4  ผลล่าสุด")
-    last = daily["date"].max()
-    span = (daily["date"].max() - daily["date"].min()).days + 1
-    print(f"  ข้อมูลตั้งแต่ {daily['date'].min():%d/%m/%Y} ถึง {last:%d/%m/%Y}  ({span} วัน)"
-          f"  ล่าสุด {df['ts'].max():%d/%m/%Y %H:%M}")
-    gap_days = (dt.datetime.now() - df["ts"].max().to_pydatetime()).days
-    if gap_days >= 2:
-        print(f"\n  *** ข้อมูลล่าสุดเก่ากว่าวันนี้ {gap_days} วัน — ดึง export รอบใหม่จาก EVE ***")
-    ld = daily[daily["date"] == last].sort_values("inv_no")
-    print(f"\n  ผลผลิตวัน {last:%d/%m/%Y}  รวม {ld['ac_kwh'].sum():,.0f} kWh"
-          f"  (เป้าฤดูฝน {TARGET_KWH_DAY['ฤดูฝน (PSH 4.0)']:,.0f} · ปกติ {TARGET_KWH_DAY['ปกติ (PSH 4.5)']:,.0f})")
-    pl = partial_last_day(daily)
-    if pl is not None:
-        print(f"  (วันนี้ยังไม่ครบวัน — ข้อมูลถึง {pl:%H:%M} น. แดชบอร์ดจะไม่นับวันนี้ในค่าเฉลี่ย/เป้า"
-              " ดึง export ใหม่หลัง 18:30 แล้วกดอัปเดตอีกครั้งจะได้ยอดเต็มวัน)")
-    if len(ld) < N_INVERTERS:
-        lack = sorted(set(INVERTER_NO) - set(ld["sn"]), key=INVERTER_NO.get)
-        print(f"  *** วันนี้มีข้อมูลแค่ {len(ld)} จาก {N_INVERTERS} เครื่อง — ขาด "
-              + ", ".join(f"#{INVERTER_NO[s]} ({s})" for s in lack) + " ***")
-    for r in ld.itertuples():
-        flag = ""
-        if r.outage_min > 0:
-            flag += f"  หยุดกลางวัน {r.outage_min} นาที"
-        if r.n_fault > 0:
-            flag += f"  fault {r.n_fault} เฟรม"
-        print(f"    #{int(r.inv_no):>2}  SN {r.sn}  {r.ac_kwh:>7,.0f} kWh  สูงสุด {r.pac_max:>5.0f} kW"
-              f"  ข้อมูล {r.coverage_pct:>3.0f}%{flag}")
-    al = alerts(daily[daily["date"] >= last - pd.Timedelta(days=6)])
-    if al:
-        print(f"\n  สิ่งที่ต้องตรวจ (7 วันล่าสุด) {len(al)} รายการ:")
-        for x in al:
-            print(f"    [{x['level']}] {x['text']}")
-    else:
-        print("\n  7 วันล่าสุดไม่พบความผิดปกติ")
-    print("\n  แดชบอร์ดพอร์ต 8504 แท็บ Solar Monitor จะเห็นข้อมูลใหม่ภายใน ~30 วินาที")
+        return run_update(check=True)
+    try:
+        with update_lock():
+            code = run_update(rebuild=a.rebuild)
+    except UpdateBusy as e:
+        print(f"\n  *** {e}")
+        return 1
     if log_path:
         print(f"  ผลทั้งหมดของรอบนี้อยู่ใน  {log_path}")
-    return 0
+    return code
 
 
 if __name__ == "__main__":
