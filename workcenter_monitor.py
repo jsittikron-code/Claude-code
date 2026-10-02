@@ -1240,10 +1240,15 @@ def flow_snapshot(df: pd.DataFrame, t: pd.Timestamp, s0: pd.Timestamp) -> list:
     """สถานะของแต่ละสถานีในช่วงสแกน (t - FLOW_STEP_MIN, t]"""
     w0 = t - pd.Timedelta(minutes=FLOW_STEP_MIN)
     blank = pd.Series("", index=df.index)
+
+    def col(name):
+        return (df[name] if name in df.columns else blank).fillna("").astype(str)
+
     df = df.assign(
         _st=[_station_index(g, m) for g, m in zip(df["Group"], df["Machine"])],
-        _typ=(df["ประเภทงาน"] if "ประเภทงาน" in df.columns else blank).astype(str),
-        _why=(df["สาเหตุ"] if "สาเหตุ" in df.columns else blank).astype(str),
+        _typ=col("ประเภทงาน"), _why=col("สาเหตุ"),
+        _name=col("Name").replace({"nan": ""}), _desc=col("Description").replace({"nan": ""}),
+        _job=col("Job"),
     )
     elapsed = max((t - s0).total_seconds() / 60, 0.0)
     out = []
@@ -1255,10 +1260,26 @@ def flow_snapshot(df: pd.DataFrame, t: pd.Timestamp, s0: pd.Timestamp) -> list:
         done = prod[prod["End"] <= t]
         mcs = []
         for mc, g in s.groupby("Machine"):
+            g = g.sort_values("Start")
             stt, why = _machine_status(
                 zip(g["Start"], g["End"], g["IsDowntime"], g["_typ"], g["_why"]), w0, t)
-            mcs.append(dict(code=str(mc), status=stt, why=why,
-                            jobs=int((act["Machine"] == mc).sum())))
+            # ใครทำงานที่เครื่องนี้ในช่วงนั้น (ตามลำดับเวลาเริ่ม) + ใบงานล่าสุดในช่วง
+            inw = g[(g["Start"] < t) & (g["End"] > w0)]
+            cur = inw.iloc[-1] if len(inw) else None
+            before = g[g["End"] <= t]
+            last = before.loc[before["End"].idxmax()] if len(before) else None
+            after = g[g["Start"] > t]
+            mcs.append(dict(
+                code=str(mc), status=stt, why=why,
+                jobs=int((act["Machine"] == mc).sum()),
+                ops=[n for n in dict.fromkeys(inw["_name"]) if n],
+                item=str(cur["_desc"]) if cur is not None else "",
+                job=str(cur["_job"]) if cur is not None else "",
+                since=cur["Start"] if cur is not None else None,
+                last_end=last["End"] if last is not None else None,
+                last_name=str(last["_name"]) if last is not None else "",
+                next_start=after["Start"].min() if len(after) else None,
+            ))
         mcs.sort(key=lambda m: m["code"])
         machines = len(mcs)
         busy = _busy_minutes(prod, s0, t) if (elapsed and machines) else 0.0
@@ -1395,6 +1416,7 @@ def flow_svg(snap: list, t: pd.Timestamp, live: bool, data_max: pd.Timestamp,
     o.append(f'<text x="{xe + 32}" y="{y_box + 74}" font-size="16" font-weight="700" text-anchor="middle" fill="currentColor">{done_jobs:,}</text>')
     connector(x_last_right, xe, 1 if wip else 0)
 
+    tips = []                       # การ์ดรายละเอียดของแต่ละรหัสเครื่อง วาดทีหลังสุดให้อยู่บนสุด
     for i, s in enumerate(snap):
         x = x0 + i * (bw + gap)
         cx = x + bw / 2
@@ -1409,27 +1431,27 @@ def flow_svg(snap: list, t: pd.Timestamp, live: bool, data_max: pd.Timestamp,
                      f'fill="{RED if s["brk_mc"] else AMBER}" font-weight="600">หยุด {s["down_mc"]} เครื่อง</text>')
         o.append(f'<text x="{cx}" y="{y_lab}" font-size="12" text-anchor="middle" fill="currentColor" fill-opacity=".75">'
                  f'งาน {FLOW_STEP_MIN} นาที {s["window_jobs"]} · สแกน {s["scans"]}</text>')
-        # รหัสเครื่องรายตัว สีตามสถานะ ชี้ค้างดูรายละเอียด
+        # รหัสเครื่องรายตัว สีตามสถานะ ชี้แล้วการ์ดรายละเอียดเด้งขึ้น (วาดไว้ท้ายสุดของภาพ)
         grid_w = CHIP_COLS * chip_w + (CHIP_COLS - 1) * chip_gap
         gx = x + (bw - grid_w) / 2
         for k, m in enumerate(s["mcs"]):
             r, c = divmod(k, CHIP_COLS)
             X, Y = gx + c * (chip_w + chip_gap), y_chip + r * (chip_h + chip_gap)
-            tip = f'{m["code"]} · {FLOW_LABELS[m["status"]]} · งานในช่วง {m["jobs"]}'
-            if m["why"]:
-                tip += f' · {m["why"]}'
+            nchip = len(tips)
             if m["status"] == "ว่าง":
-                shape = (f'<rect x="{X}" y="{Y}" width="{chip_w}" height="{chip_h}" rx="3" fill="none" '
-                         f'stroke="currentColor" stroke-opacity=".35"/>')
+                # fill โปร่งใสแต่ไม่ใช่ none — ไม่งั้นเมาส์ต้องโดนเส้นขอบ 1 px พอดีถึงจะนับว่าชี้
+                shape = (f'<rect x="{X}" y="{Y}" width="{chip_w}" height="{chip_h}" rx="3" '
+                         f'fill="currentColor" fill-opacity="0" stroke="currentColor" stroke-opacity=".35"/>')
                 fg = 'fill="currentColor" fill-opacity=".55"'
             else:
                 cls = ' class="run"' if m["status"] == "เดิน" else ""
                 shape = (f'<rect{cls} x="{X}" y="{Y}" width="{chip_w}" height="{chip_h}" rx="3" '
                          f'fill="{FLOW_COLORS[m["status"]]}"/>')
                 fg = 'fill="#1b1b1b"' if m["status"] == "แผน" else 'fill="#ffffff"'
-            o.append(f'<g><title>{esc(tip)}</title>{shape}'
+            o.append(f'<g class="fk fc{nchip}">{shape}'
                      f'<text x="{X + chip_w / 2}" y="{Y + 14}" font-size="11" font-weight="600" '
                      f'text-anchor="middle" {fg}>{esc(m["code"])}</text></g>')
+            tips.append((nchip, X, Y, m, s["th"]))
         # ล่าง: เสร็จแล้ว + Utilization
         o.append(f'<text x="{x}" y="{y_done}" font-size="12" fill="currentColor" fill-opacity=".7">เสร็จ {s["done_qty"]:,.0f} ชิ้น · {s["done_jobs"]} งาน</text>')
         o.append(f'<text x="{x}" y="{y_util}" font-size="13" fill="currentColor" fill-opacity=".75">Utilization</text>')
@@ -1480,7 +1502,75 @@ def flow_svg(snap: list, t: pd.Timestamp, live: bool, data_max: pd.Timestamp,
         o.append(f'<text x="{lx + 20}" y="{y_legend}" font-size="12" fill="currentColor" fill-opacity=".75">{FLOW_LABELS[key]}</text>')
         lx += 110
     o.append(f'<text x="{xe_s}" y="{y_legend}" font-size="11" text-anchor="end" fill="currentColor" fill-opacity=".45">'
-             f'ข้อมูลใบงานถึง {data_max:%H:%M} · ชี้ที่รหัสเครื่องเพื่อดูรายละเอียด · คิดจากใบงานจริง ไม่ใช่โมเดลจำลอง</text>')
+             f'ข้อมูลใบงานถึง {data_max:%H:%M} · ชี้ที่รหัสเครื่องเพื่อดูผู้ปฏิบัติงาน · คิดจากใบงานจริง ไม่ใช่โมเดลจำลอง</text>')
+
+    # การ์ดรายละเอียดเมื่อชี้รหัสเครื่อง
+    #
+    # ทำด้วย CSS ล้วน เพราะ st.markdown ไม่รัน JavaScript: การ์ดซ่อนไว้ (opacity 0) แล้วกฎ
+    # svg:has(.fcN:hover) .ftN แสดงการ์ดใบที่ N เมื่อเมาส์อยู่บนรหัสเครื่องใบที่ N
+    # การ์ดต้องวาดไว้ท้ายสุดของ SVG ถึงจะลอยทับรหัสเครื่องตัวอื่น (SVG เรียงชั้นตามลำดับที่วาด)
+    # ใช้ class ไม่ใช้ id เพราะตัวกรอง HTML ของ Streamlit เติมคำนำหน้าให้ id ทำให้อ้างถึงไม่ได้
+    # เดิมใช้ <title> ของเบราว์เซอร์ ต้องชี้ค้างราว 1 วิ ตัวเล็ก และไม่มีชื่อคน (ผู้ใช้ขอ 2 ต.ค. 2569)
+    def cut(text, n):
+        text = str(text).strip()
+        return text if len(text) <= n else text[:n - 1] + "…"
+
+    TW, LH = 300, 18
+    rules = []
+    for nchip, X, Y, m, station in tips:
+        stt = m["status"]
+        head_col = FLOW_COLORS.get(stt, "#c8ccd4")
+        lines = [(f'{m["code"]} · {FLOW_LABELS[stt]}', True, head_col),
+                 (f'สถานี {station}', False, "#9aa3b2")]
+        named = [n for n in m["ops"] if n != "ไม่ระบุชื่อ"]
+        if named:
+            more = f' +{len(named) - 2}' if len(named) > 2 else ""
+            lines.append((cut("ผู้ปฏิบัติงาน: " + ", ".join(named[:2]), 40) + more, True, "#f0f2f6"))
+        elif stt != "ว่าง":
+            # ใบงานที่คร่อมช่วงนี้มีแต่ไม่มีชื่อคนในช่อง พนักงาน ของ MOS
+            lines.append(("ผู้ปฏิบัติงาน: (ใบงานไม่ระบุชื่อ)", False, "#f0f2f6"))
+        elif m["last_name"] and m["last_name"] != "ไม่ระบุชื่อ":
+            lines.append((cut(f'ผู้ปฏิบัติงานล่าสุด: {m["last_name"]}', 42), True, "#f0f2f6"))
+        else:
+            lines.append(("ผู้ปฏิบัติงาน: —", False, "#f0f2f6"))
+        if stt == "เดิน":
+            since = f' · เริ่ม {m["since"]:%H:%M}' if m["since"] is not None else ""
+            lines.append((f'งานในช่วงนี้ {m["jobs"]} ใบ{since}', False, "#d5d9e0"))
+            if m["item"]:
+                lines.append((cut(f'ชิ้นงาน: {m["item"]}', 42), False, "#d5d9e0"))
+            if m["job"]:
+                lines.append((f'ใบงาน {m["job"]}', False, "#9aa3b2"))
+        elif stt in ("แผน", "เสีย"):
+            lines.append((cut(f'สาเหตุ: {m["why"] or "-"}', 42), False, "#d5d9e0"))
+            if m["since"] is not None:
+                lines.append((f'เริ่มหยุด {m["since"]:%H:%M}', False, "#9aa3b2"))
+        else:
+            if m["last_end"] is not None:
+                nxt = f' · งานถัดไป {m["next_start"]:%H:%M}' if m["next_start"] is not None else ""
+                lines.append((f'ว่างตั้งแต่ {m["last_end"]:%H:%M}{nxt}', False, "#d5d9e0"))
+            elif m["next_start"] is not None:
+                lines.append((f'ยังไม่เริ่มงาน · งานแรก {m["next_start"]:%H:%M}', False, "#d5d9e0"))
+            else:
+                lines.append(("วันนี้ไม่มีใบงาน", False, "#d5d9e0"))
+        th_ = 14 + LH * len(lines)
+        tx = min(max(X + chip_w / 2 - TW / 2, 4), W - TW - 4)
+        ty = Y + chip_h + 8
+        if ty + th_ > H - 4:                   # ล้นขอบล่าง → แสดงเหนือรหัสเครื่องแทน
+            ty = Y - th_ - 8
+        o.append(f'<g class="ft ft{nchip}">'
+                 f'<rect x="{tx:.1f}" y="{ty:.1f}" width="{TW}" height="{th_}" rx="6" fill="#1c2130" '
+                 f'fill-opacity=".97" stroke="{head_col}" stroke-width="1.5"/>')
+        for j, (txt, bold, color) in enumerate(lines):
+            weight = ' font-weight="700"' if bold else ""
+            size = 13 if j == 0 else 12
+            o.append(f'<text x="{tx + 12:.1f}" y="{ty + 20 + LH * j:.1f}" font-size="{size}"{weight} '
+                     f'fill="{color}">{esc(txt)}</text>')
+        o.append("</g>")
+        rules.append(f"svg:has(.fc{nchip}:hover) .ft{nchip}")
+    if rules:
+        o.append("<style>.ft{opacity:0;pointer-events:none;transition:opacity .1s}"
+                 ".fk{cursor:pointer}.fk:hover rect{stroke:#ffffff;stroke-width:2;stroke-opacity:1}"
+                 + ",".join(rules) + "{opacity:1}</style>")
     o.append("</svg>")
     return "".join(o)
 
@@ -1613,6 +1703,35 @@ with tab_flow:
             st.markdown(flow_svg(snap, t, live, data_max, int((~day_df["IsDowntime"]).sum()),
                                  (n_bins, rows, d0)),
                         unsafe_allow_html=True)
+
+            # ตารางเดียวกับการ์ดลอย แต่เห็นทุกเครื่องพร้อมกัน และใช้บนมือถือได้ (ชี้เมาส์ไม่ได้)
+            # ชื่อหัวพับต้องคงที่ ถ้าใส่เวลาลงไป Streamlit จะนับเป็นตัวใหม่แล้วพับปิดทุกครั้งที่ภาพขยับ
+            with st.expander("👷 ตารางเครื่องจักรและผู้ปฏิบัติงาน ในช่วงที่กำลังดู", expanded=False):
+                icon = {"เดิน": "🔵", "แผน": "🟠", "เสีย": "🔴", "ว่าง": "⚪"}
+                grid = []
+                for s_ in snap:
+                    for m in s_["mcs"]:
+                        if m["ops"]:
+                            who = ", ".join(m["ops"])
+                        elif m["last_name"]:
+                            who = f"(ล่าสุด) {m['last_name']}"
+                        else:
+                            who = "—"
+                        grid.append({
+                            "สถานี": s_["th"], "เครื่อง": m["code"],
+                            "สถานะ": f'{icon[m["status"]]} {FLOW_LABELS[m["status"]]}',
+                            "ผู้ปฏิบัติงาน": who, "งานในช่วง": m["jobs"],
+                            "ชิ้นงาน / สาเหตุหยุด": m["why"] if m["status"] in ("แผน", "เสีย") else m["item"],
+                            "ใบงาน": m["job"],
+                            "ตั้งแต่": f'{m["since"]:%H:%M}' if m["since"] is not None else "",
+                            "จบล่าสุด": f'{m["last_end"]:%H:%M}' if m["last_end"] is not None else "",
+                            "งานถัดไป": f'{m["next_start"]:%H:%M}' if m["next_start"] is not None else "",
+                        })
+                st.caption(f"ช่วง {t - pd.Timedelta(minutes=FLOW_STEP_MIN):%H:%M}–{t:%H:%M} · "
+                           f"{len(grid)} เครื่อง · ผู้ปฏิบัติงาน = ชื่อบนใบงานที่คร่อมช่วงนี้ "
+                           "ถ้าเครื่องว่างจะแสดงคนล่าสุด")
+                st.dataframe(pd.DataFrame(grid), hide_index=True, width="stretch",
+                             height=min(38 + 35 * len(grid), 560))
 
         flow_board()
         st.caption(
