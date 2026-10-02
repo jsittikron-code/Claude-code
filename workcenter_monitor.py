@@ -1146,17 +1146,22 @@ with tab_timeline:
         )
 
 # --- 2b) ไลน์การผลิต — งานไหลผ่านสถานีจริงตามเวลา ---
-# หน้าตาแบบ "โมเดลจำลองไลน์" แต่ทุกตัวเลขคิดจากใบงานจริงของวันที่เลือก ณ เวลา t
-#   เครื่องเดิน  = เครื่องที่มีใบงานผลิตคร่อมเวลา t
-#   งานกำลังทำ   = ใบงานที่ Start <= t < End (วาดเป็นสี่เหลี่ยมใต้กล่อง)
-#   เสร็จแล้ว    = ผลรวม Qty ของใบงานผลิตที่จบก่อน t
-#   Utilization = นาทีที่เครื่องมีงานผลิต (รวมช่วงที่ซ้อนกันเป็นช่วงเดียวแล้ว)
-#                 ÷ (จำนวนเครื่องของสถานี × นาทีตั้งแต่เริ่มกะถึง t)
+# หน้าตาแบบ "โมเดลจำลองไลน์" แต่ทุกตัวเลขคิดจากใบงานจริงของวันที่เลือก
 #
-# ข้อจำกัดที่ต้องรู้ก่อนอ่านภาพ
-#   MOS ไม่ได้บอกว่าชิ้นงานไหนเดินทางไปสถานีไหนต่อ ภาพนี้จึงเป็น "รายสถานี"
-#   ไม่ใช่การติดตามชิ้นงานรายชิ้น และ "คิวรอ" ของโมเดลจำลองไม่มีในข้อมูลจริง
-#   จึงแสดง "งานกำลังทำ" แทน ไม่ปั้นตัวเลขที่ไม่มี
+# แต่ละภาพคือ "ช่วงสแกน" ยาว FLOW_STEP_MIN นาทีที่จบที่เวลา t คือ (t-5, t]
+#   ใช้ช่วงแทนจุดเวลาเดียว เพราะใบงานสั้นที่เริ่มและจบระหว่างสองภาพจะไม่เคยโผล่ถ้าดูแค่จุดเวลา
+#   ช่วงของภาพที่ติดกันต่อกันพอดี ใบงานทุกใบจึงปรากฏอย่างน้อยหนึ่งภาพ
+#   (ผู้ใช้ขอ 2 ต.ค. 2569 "อยากเห็นความถี่หรือต่อเนื่องของข้อมูลมากที่สุด")
+#
+#   สถานะเครื่อง = ช่วงนั้นเวลาส่วนใหญ่ทำอะไร
+#                  ผลิต → เดิน · B/BP → เสีย/ซ่อม · P → หยุดตามแผน · ไม่มีอะไร → ว่าง
+#                  เวลาหยุดเท่ากับเวลาผลิตพอดีถือว่าหยุด (ลำดับความสำคัญ BD > RUN ของฝ่าย)
+#   งาน 5 นาที   = ใบงานผลิตที่คร่อมช่วง · สแกน = ใบงานที่เริ่มในช่วง (ความถี่)
+#   เสร็จแล้ว     = ผลรวม Qty ของใบงานผลิตที่จบไม่เกิน t
+#   Utilization  = นาทีที่เครื่องมีงานผลิต (รวมช่วงที่ซ้อนกันแล้ว) ÷ (จำนวนเครื่อง × นาทีตั้งแต่เริ่มกะถึง t)
+#
+# ข้อจำกัด: MOS ไม่ได้บอกว่าชิ้นงานไหนเดินทางไปสถานีไหนต่อ ชิ้นที่วิ่งบนเส้นเชื่อม
+# เป็นภาพแทน "สถานีถัดไปมีงานป้อนอยู่" ไม่ใช่การขนส่งจริง
 STATIONS = [
     # (ชื่อไทย, ชื่ออังกฤษ, กลุ่มเครื่องตามตาราง ETL, รหัสนำหน้าเผื่อกลุ่มใหม่ที่ยังไม่รู้จัก)
     ("ตัดแผ่น",   "Cutting",      ("ตัดใหญ่", "ตัดเล็ก"),                               ("CT",)),
@@ -1165,7 +1170,11 @@ STATIONS = [
     ("ปิดผิว",    "Laminating",   ("ปิดผิว",),                                          ("LA",)),
     ("งานอื่น ๆ", "Finishing",    (),                                                    ()),
 ]
-FLOW_STEP_MIN = 5          # เล่นย้อนดู: เดินหน้าทีละกี่นาทีต่อวินาที
+FLOW_STEP_MIN = 5          # ความยาวช่วงสแกนของแต่ละภาพ = ระยะเดินหน้าเมื่อกดเล่น
+FLOW_TICK = "2s"           # เล่นย้อนดู: วาดใหม่ทุกกี่วินาที (ต้องนานกว่าแอนิเมชันชิ้นงาน 1.6 วิ)
+CHIP_COLS = 3              # รหัสเครื่องต่อแถวใต้สถานี
+FLOW_COLORS = {"เดิน": "#4f7fb6", "แผน": "#e0a030", "เสีย": "#d9534f"}
+FLOW_LABELS = {"เดิน": "เดิน", "แผน": "หยุดตามแผน", "เสีย": "เสีย/ซ่อม", "ว่าง": "ว่าง"}
 
 
 def _station_index(group, machine) -> int:
@@ -1203,42 +1212,147 @@ def _busy_minutes(df: pd.DataFrame, s0: pd.Timestamp, t: pd.Timestamp) -> float:
     return total
 
 
+def _machine_status(rows, w0: pd.Timestamp, t: pd.Timestamp) -> tuple:
+    """สถานะเครื่องในช่วง (w0, t] ตามเวลาส่วนใหญ่ → (สถานะ, เหตุผล)"""
+    run = brk = pln = 0.0
+    why_b = why_p = ""
+    for s, e, down, typ, why in rows:
+        ov = (min(e, t) - max(s, w0)).total_seconds()
+        if ov <= 0:
+            continue
+        if not down:
+            run += ov
+        elif str(typ).startswith("B"):          # B - แจ้งซ่อม · BP - ช่างเข้าซ่อม
+            brk += ov
+            why_b = why_b or str(why)
+        else:                                   # P - หยุดตามแผน
+            pln += ov
+            why_p = why_p or str(why)
+    stop = brk + pln
+    if stop > 0 and stop >= run:
+        return ("เสีย", why_b) if brk >= pln else ("แผน", why_p)
+    if run > 0:
+        return "เดิน", ""
+    return "ว่าง", ""
+
+
 def flow_snapshot(df: pd.DataFrame, t: pd.Timestamp, s0: pd.Timestamp) -> list:
-    """สถานะของแต่ละสถานี ณ เวลา t"""
-    df = df.assign(_st=[_station_index(g, m) for g, m in zip(df["Group"], df["Machine"])])
-    out = []
+    """สถานะของแต่ละสถานีในช่วงสแกน (t - FLOW_STEP_MIN, t]"""
+    w0 = t - pd.Timedelta(minutes=FLOW_STEP_MIN)
+    blank = pd.Series("", index=df.index)
+
+    def col(name):
+        return (df[name] if name in df.columns else blank).fillna("").astype(str)
+
+    df = df.assign(
+        _st=[_station_index(g, m) for g, m in zip(df["Group"], df["Machine"])],
+        _typ=col("ประเภทงาน"), _why=col("สาเหตุ"),
+        _name=col("Name").replace({"nan": ""}), _desc=col("Description").replace({"nan": ""}),
+        _job=col("Job"),
+    )
     elapsed = max((t - s0).total_seconds() / 60, 0.0)
+    out = []
     for i, (th, en, _, _) in enumerate(STATIONS):
         s = df[df["_st"] == i]
         prod = s[~s["IsDowntime"]]
-        running = prod[(prod["Start"] <= t) & (prod["End"] > t)]
-        down = s[s["IsDowntime"] & (s["Start"] <= t) & (s["End"] > t)]
+        act = prod[(prod["Start"] < t) & (prod["End"] > w0)]
+        scans = prod[(prod["Start"] > w0) & (prod["Start"] <= t)]
         done = prod[prod["End"] <= t]
-        machines = int(s["Machine"].nunique())
+        mcs = []
+        for mc, g in s.groupby("Machine"):
+            g = g.sort_values("Start")
+            stt, why = _machine_status(
+                zip(g["Start"], g["End"], g["IsDowntime"], g["_typ"], g["_why"]), w0, t)
+            # ใครทำงานที่เครื่องนี้ในช่วงนั้น (ตามลำดับเวลาเริ่ม) + ใบงานล่าสุดในช่วง
+            inw = g[(g["Start"] < t) & (g["End"] > w0)]
+            cur = inw.iloc[-1] if len(inw) else None
+            before = g[g["End"] <= t]
+            last = before.loc[before["End"].idxmax()] if len(before) else None
+            after = g[g["Start"] > t]
+            mcs.append(dict(
+                code=str(mc), status=stt, why=why,
+                jobs=int((act["Machine"] == mc).sum()),
+                ops=[n for n in dict.fromkeys(inw["_name"]) if n],
+                item=str(cur["_desc"]) if cur is not None else "",
+                job=str(cur["_job"]) if cur is not None else "",
+                since=cur["Start"] if cur is not None else None,
+                last_end=last["End"] if last is not None else None,
+                last_name=str(last["_name"]) if last is not None else "",
+                next_start=after["Start"].min() if len(after) else None,
+            ))
+        mcs.sort(key=lambda m: m["code"])
+        machines = len(mcs)
         busy = _busy_minutes(prod, s0, t) if (elapsed and machines) else 0.0
         util = min(busy / (machines * elapsed), 1.0) if (elapsed and machines) else 0.0
+        n_brk = sum(m["status"] == "เสีย" for m in mcs)
+        n_pln = sum(m["status"] == "แผน" for m in mcs)
         out.append(dict(
-            th=th, en=en, machines=machines,
-            running_mc=int(running["Machine"].nunique()), running_jobs=int(len(running)),
-            down_mc=int(down["Machine"].nunique()),
+            th=th, en=en, machines=machines, mcs=mcs,
+            running_mc=sum(m["status"] == "เดิน" for m in mcs),
+            brk_mc=n_brk, pln_mc=n_pln, down_mc=n_brk + n_pln,
+            window_jobs=int(len(act)), scans=int(len(scans)),
             done_qty=float(pd.to_numeric(done["Qty"], errors="coerce").fillna(0).sum()),
             done_jobs=int(len(done)), util=util,
         ))
     return out
 
 
+def flow_strip(df: pd.DataFrame, d0: pd.Timestamp, d1: pd.Timestamp) -> tuple:
+    """จำนวนใบงานผลิตที่คร่อมแต่ละช่อง 5 นาทีของวัน แยกตามสถานี → (จำนวนช่อง, แถวละสถานี)
+
+    ช่อง k = [d0 + k·5, d0 + (k+1)·5) · ใบงานนับในทุกช่องที่มันคร่อม
+    """
+    step = pd.Timedelta(minutes=FLOW_STEP_MIN)
+    n = max(int((d1 - d0) / step), 1)
+    rows = [[0] * n for _ in STATIONS]
+    prod = df[~df["IsDowntime"]]
+    for g, m, s, e in zip(prod["Group"], prod["Machine"], prod["Start"], prod["End"]):
+        a = max(int((s - d0) // step), 0)          # ช่องแรกที่คร่อม (ปัดลง)
+        b = min(-((d0 - e) // step), n)            # ช่องถัดจากช่องสุดท้าย (ปัดขึ้น)
+        row = rows[_station_index(g, m)]
+        for k in range(a, b):
+            row[k] += 1
+    return n, rows
+
+
+def _flow_range(df: pd.DataFrame, day0: pd.Timestamp) -> tuple:
+    """ช่วงเวลาของวันที่จะเล่น/วาดแถบ: อย่างน้อยเวลากะ ขยายตามใบงานผลิตจริง"""
+    prod = df[~df["IsDowntime"]]
+    lo = day0 + pd.Timedelta(hours=SHIFT_START_HOUR)
+    hi = day0 + pd.Timedelta(hours=SHIFT_END_HOUR)
+    if not prod.empty:
+        lo = min(lo, prod["Start"].min().floor("h"))
+        hi = max(hi, prod["End"].max().ceil("h"))
+    return max(lo, day0), min(hi, day0 + pd.Timedelta(hours=23, minutes=55))
+
+
 def flow_svg(snap: list, t: pd.Timestamp, live: bool, data_max: pd.Timestamp,
-             total_jobs: int) -> str:
+             total_jobs: int, strip: tuple) -> str:
     """วาดไลน์เป็น SVG — สีตัวอักษรใช้ currentColor จึงอ่านได้ทั้งธีมมืดและสว่าง"""
-    BLUE, RED = "#4f7fb6", "#d9534f"
+    import html as _html
+    esc = _html.escape
+    n_bins, rows, d0 = strip
+    BLUE, RED, AMBER = FLOW_COLORS["เดิน"], FLOW_COLORS["เสีย"], FLOW_COLORS["แผน"]
+    w0 = t - pd.Timedelta(minutes=FLOW_STEP_MIN)
     n = len(snap)
     bw, bh, gap = 178, 110, 72          # gap กว้างพอให้เห็นชิ้นงานวิ่งบนเส้นเชื่อม
     x0, y_box = 160, 118
     W = x0 + n * (bw + gap) + 110
-    H = 470
+    chip_w, chip_h, chip_gap = 54, 20, 4
+    max_rows = max([(len(s["mcs"]) + CHIP_COLS - 1) // CHIP_COLS for s in snap] + [1])
+    y_lab = y_box + bh + 24
+    y_chip = y_lab + 12
+    y_done = y_chip + max_rows * (chip_h + chip_gap) + 22
+    y_util = y_done + 22
+    y_strip_t = y_util + 50
+    y_strip = y_strip_t + 12
+    rh = 13
+    y_axis = y_strip + rh * n + 14
+    y_legend = y_axis + 26
+    H = y_legend + 14
     done_qty = sum(s["done_qty"] for s in snap)
     done_jobs = sum(s["done_jobs"] for s in snap)
-    running = sum(s["running_jobs"] for s in snap)
+    wip = sum(s["window_jobs"] for s in snap)
     run_mc = sum(s["running_mc"] for s in snap)
     all_mc = sum(s["machines"] for s in snap)
 
@@ -1250,22 +1364,17 @@ def flow_svg(snap: list, t: pd.Timestamp, live: bool, data_max: pd.Timestamp,
                   f'<line x1="{cx}" y1="{cy - tick}" x2="{cx}" y2="{cy + tick}" stroke="currentColor" stroke-opacity=".5"/>')
         return o
 
-    # แอนิเมชันทำด้วย CSS ใน SVG จึงวิ่งต่อเนื่องในเบราว์เซอร์ระหว่างรอบรีเฟรช
-    # (st.html ไม่รัน JavaScript แต่ CSS keyframes ทำงานได้)
-    #   .fl   ชิ้นงานวิ่งซ้ายไปขวาบนเส้นเชื่อม ความยาวทาง = gap - 18
-    #   .q    สี่เหลี่ยมในกองงานกำลังทำ โผล่จากบนลงล่างตอนวาดใหม่
-    #   .top  ตัวบนสุดของกองกะพริบเบา ๆ ให้รู้ว่ากำลังทำอยู่
-    #   .bar  แถบ utilization ยืดจาก 0 ตอนวาดใหม่
+    # แอนิเมชันเป็น CSS ใน SVG จึงขยับต่อเนื่องในเบราว์เซอร์ระหว่างรอบรีเฟรช
+    #   .fl  ชิ้นงานวิ่งซ้ายไปขวาบนเส้นเชื่อม · .run  รหัสเครื่องที่เดินอยู่ "หายใจ" เบา ๆ
+    #   .bar แถบ utilization ยืดจาก 0 ตอนวาดใหม่
     style = (
         "<style>"
         f"@keyframes fl{{0%{{transform:translateX(0);opacity:0}}12%{{opacity:1}}88%{{opacity:1}}"
         f"100%{{transform:translateX({gap - 18}px);opacity:0}}}}"
-        "@keyframes q{from{transform:scaleY(0)}to{transform:scaleY(1)}}"
-        "@keyframes pulse{0%,100%{fill-opacity:1}50%{fill-opacity:.4}}"
+        "@keyframes breathe{0%,100%{fill-opacity:1}50%{fill-opacity:.62}}"
         "@keyframes bar{from{transform:scaleX(0)}to{transform:scaleX(1)}}"
         ".fl{animation:fl 1.6s linear infinite}"
-        ".q{transform-box:fill-box;transform-origin:top;animation:q .35s ease-out both}"
-        ".top{animation:q .35s ease-out both,pulse 1.4s ease-in-out .4s infinite}"
+        ".run{animation:breathe 1.8s ease-in-out infinite}"
         ".bar{transform-box:fill-box;transform-origin:left;animation:bar .6s ease-out both}"
         "</style>"
     )
@@ -1273,11 +1382,12 @@ def flow_svg(snap: list, t: pd.Timestamp, live: bool, data_max: pd.Timestamp,
          f'style="font-family:inherit;max-width:{W}px;display:block">', style]
     # หัวเรื่องซ้าย + KPI ขวา
     o.append(f'<text x="{x0 - 100}" y="34" font-size="13" fill="{BLUE}" font-weight="600">'
-             f'{"● สด · เดินตามเวลาจริง รีเฟรชทุกนาที" if live else "ย้อนดู"}</text>')
+             f'{"● สด · เดินตามเวลาจริง รีเฟรชทุกนาที" if live else "ย้อนดู"} · '
+             f'ช่วงสแกน {FLOW_STEP_MIN} นาที</text>')
     o.append(f'<text x="{x0 - 100}" y="72" font-size="30" font-weight="700" fill="currentColor">'
-             f'ดูงานไหลผ่านไลน์ ณ เวลา {t:%H:%M}</text>')
+             f'ดูงานไหลผ่านไลน์ · {w0:%H:%M}–{t:%H:%M}</text>')
     kpis = [("เวลา", f"{t:%H:%M} น."), ("เสร็จแล้ว", f"{done_qty:,.0f} ชิ้น"),
-            ("WIP ในไลน์", f"{running} งาน"), ("เครื่องเดิน", f"{run_mc}/{all_mc}")]
+            ("WIP ในไลน์", f"{wip} งาน"), ("เครื่องเดิน", f"{run_mc}/{all_mc}")]
     kw, kx = 150, W - 100 - 4 * 158
     for i, (lab, val) in enumerate(kpis):
         x = kx + i * 158
@@ -1304,44 +1414,170 @@ def flow_svg(snap: list, t: pd.Timestamp, live: bool, data_max: pd.Timestamp,
     o.append(box(xe, y_box + 18, 64, 74))
     o.append(f'<text x="{xe + 32}" y="{y_box + 50}" font-size="13" text-anchor="middle" fill="{BLUE}">เสร็จ</text>')
     o.append(f'<text x="{xe + 32}" y="{y_box + 74}" font-size="16" font-weight="700" text-anchor="middle" fill="currentColor">{done_jobs:,}</text>')
-    # เส้นสุดท้ายเข้ากล่อง "เสร็จ" — วิ่ง 1 ชิ้นถ้ามีงานกำลังทำที่ไหนก็ได้ในไลน์
-    connector(x_last_right, xe, 1 if running else 0)
+    connector(x_last_right, xe, 1 if wip else 0)
 
+    tips = []                       # การ์ดรายละเอียดของแต่ละรหัสเครื่อง วาดทีหลังสุดให้อยู่บนสุด
     for i, s in enumerate(snap):
         x = x0 + i * (bw + gap)
         cx = x + bw / 2
-        # เส้นเชื่อมเข้าสถานีนี้: ชิ้นที่วิ่ง = งานที่กำลังทำอยู่ที่สถานีนี้ (ไม่ใช่ชิ้นที่กำลังขนส่ง
-        # MOS ไม่มีข้อมูลขนส่ง) — เป็นภาพแทนว่าสถานีนี้มีงานป้อนอยู่
-        connector(x - gap, x, s["running_jobs"])
+        connector(x - gap, x, s["window_jobs"])
         # กล่องสถานี
         o.append(box(x, y_box, bw, bh))
         o.append(f'<text x="{cx}" y="{y_box + 36}" font-size="21" font-weight="700" text-anchor="middle" fill="currentColor">{s["th"]}</text>')
         o.append(f'<text x="{cx}" y="{y_box + 56}" font-size="12" text-anchor="middle" fill="currentColor" fill-opacity=".55">{s["en"]}</text>')
         o.append(f'<text x="{cx}" y="{y_box + 82}" font-size="13" text-anchor="middle" fill="currentColor">เครื่องเดิน {s["running_mc"]}/{s["machines"]}</text>')
         if s["down_mc"]:
-            o.append(f'<text x="{cx}" y="{y_box + 100}" font-size="12" text-anchor="middle" fill="{RED}" font-weight="600">หยุด {s["down_mc"]} เครื่อง</text>')
-        # ใต้กล่อง: งานกำลังทำ เป็นกองสี่เหลี่ยมเรียงลง (สูงสุด 8 แล้วเขียน +n)
-        ty = y_box + bh + 24
-        o.append(f'<text x="{cx}" y="{ty}" font-size="13" text-anchor="middle" fill="currentColor" fill-opacity=".75">กำลังทำ {s["running_jobs"]} งาน</text>')
-        shown = min(s["running_jobs"], 8)
-        for k in range(shown):
-            cls = "top" if k == 0 else "q"
-            o.append(f'<rect class="{cls}" style="animation-delay:{k * 0.06:.2f}s" '
-                     f'x="{cx - 10}" y="{ty + 12 + k * 24}" width="20" height="20" fill="{BLUE}"/>')
-        if s["running_jobs"] > shown:
-            o.append(f'<text x="{cx}" y="{ty + 12 + shown * 24 + 16}" font-size="12" text-anchor="middle" fill="currentColor" fill-opacity=".6">+{s["running_jobs"] - shown}</text>')
-        # ล่างสุด: เสร็จแล้ว + Utilization
-        uy = H - 52
-        o.append(f'<text x="{x}" y="{uy - 22}" font-size="12" fill="currentColor" fill-opacity=".7">เสร็จ {s["done_qty"]:,.0f} ชิ้น · {s["done_jobs"]} งาน</text>')
-        o.append(f'<text x="{x}" y="{uy}" font-size="13" fill="currentColor" fill-opacity=".75">Utilization</text>')
-        o.append(f'<text x="{x + bw}" y="{uy}" font-size="14" font-weight="700" text-anchor="end" fill="currentColor">{s["util"] * 100:.0f}%</text>')
-        o.append(f'<rect x="{x}" y="{uy + 8}" width="{bw}" height="8" fill="{BLUE}" fill-opacity=".22"/>')
-        o.append(f'<rect class="bar" x="{x}" y="{uy + 8}" width="{max(bw * s["util"], 0.1):.1f}" height="8" fill="{BLUE}"/>')
+            o.append(f'<text x="{cx}" y="{y_box + 100}" font-size="12" text-anchor="middle" '
+                     f'fill="{RED if s["brk_mc"] else AMBER}" font-weight="600">หยุด {s["down_mc"]} เครื่อง</text>')
+        o.append(f'<text x="{cx}" y="{y_lab}" font-size="12" text-anchor="middle" fill="currentColor" fill-opacity=".75">'
+                 f'งาน {FLOW_STEP_MIN} นาที {s["window_jobs"]} · สแกน {s["scans"]}</text>')
+        # รหัสเครื่องรายตัว สีตามสถานะ ชี้แล้วการ์ดรายละเอียดเด้งขึ้น (วาดไว้ท้ายสุดของภาพ)
+        grid_w = CHIP_COLS * chip_w + (CHIP_COLS - 1) * chip_gap
+        gx = x + (bw - grid_w) / 2
+        for k, m in enumerate(s["mcs"]):
+            r, c = divmod(k, CHIP_COLS)
+            X, Y = gx + c * (chip_w + chip_gap), y_chip + r * (chip_h + chip_gap)
+            nchip = len(tips)
+            if m["status"] == "ว่าง":
+                # fill โปร่งใสแต่ไม่ใช่ none — ไม่งั้นเมาส์ต้องโดนเส้นขอบ 1 px พอดีถึงจะนับว่าชี้
+                shape = (f'<rect x="{X}" y="{Y}" width="{chip_w}" height="{chip_h}" rx="3" '
+                         f'fill="currentColor" fill-opacity="0" stroke="currentColor" stroke-opacity=".35"/>')
+                fg = 'fill="currentColor" fill-opacity=".55"'
+            else:
+                cls = ' class="run"' if m["status"] == "เดิน" else ""
+                shape = (f'<rect{cls} x="{X}" y="{Y}" width="{chip_w}" height="{chip_h}" rx="3" '
+                         f'fill="{FLOW_COLORS[m["status"]]}"/>')
+                fg = 'fill="#1b1b1b"' if m["status"] == "แผน" else 'fill="#ffffff"'
+            o.append(f'<g class="fk fc{nchip}">{shape}'
+                     f'<text x="{X + chip_w / 2}" y="{Y + 14}" font-size="11" font-weight="600" '
+                     f'text-anchor="middle" {fg}>{esc(m["code"])}</text></g>')
+            tips.append((nchip, X, Y, m, s["th"]))
+        # ล่าง: เสร็จแล้ว + Utilization
+        o.append(f'<text x="{x}" y="{y_done}" font-size="12" fill="currentColor" fill-opacity=".7">เสร็จ {s["done_qty"]:,.0f} ชิ้น · {s["done_jobs"]} งาน</text>')
+        o.append(f'<text x="{x}" y="{y_util}" font-size="13" fill="currentColor" fill-opacity=".75">Utilization</text>')
+        o.append(f'<text x="{x + bw}" y="{y_util}" font-size="14" font-weight="700" text-anchor="end" fill="currentColor">{s["util"] * 100:.0f}%</text>')
+        o.append(f'<rect x="{x}" y="{y_util + 8}" width="{bw}" height="8" fill="{BLUE}" fill-opacity=".22"/>')
+        o.append(f'<rect class="bar" x="{x}" y="{y_util + 8}" width="{max(bw * s["util"], 0.1):.1f}" height="8" fill="{BLUE}"/>')
 
-    o.append(f'<text x="{W - 100}" y="{H - 6}" font-size="11" text-anchor="end" fill="currentColor" fill-opacity=".45">'
-             f'ข้อมูลใบงานถึง {data_max:%H:%M} · คิดจากใบงานจริง ไม่ใช่โมเดลจำลอง</text>')
+    # แถบความต่อเนื่องทั้งวัน — แถวละสถานี ช่องละ 5 นาที สีเข้ม = งานคร่อมช่องนั้นมาก
+    # ปรับความเข้มต่อแถว ให้เห็นความต่อเนื่องของสถานีที่งานน้อยด้วย ไม่ถูกสถานีงานมากกลบ
+    xs, xe_s = x0, x_last_right
+    cw = (xe_s - xs) / n_bins
+    o.append(f'<text x="{xs}" y="{y_strip_t}" font-size="13" font-weight="600" fill="currentColor">'
+             f'ความต่อเนื่องของงาน ทุก {FLOW_STEP_MIN} นาที</text>')
+    o.append(f'<text x="{xe_s}" y="{y_strip_t}" font-size="11" text-anchor="end" fill="currentColor" fill-opacity=".55">'
+             f'สีเข้ม = งานมาก · ช่องว่าง = ไม่มีใบงาน · กรอบ = ช่วงที่กำลังดู'
+             f'{"" if live else " · หลังจากนั้นจางลง"}</text>')
+    k_cur = int((t - d0) / pd.Timedelta(minutes=FLOW_STEP_MIN)) - 1
+    for i, s in enumerate(snap):
+        y = y_strip + i * rh
+        o.append(f'<text x="{xs - 8}" y="{y + 10}" font-size="11" text-anchor="end" fill="currentColor" fill-opacity=".7">{s["th"]}</text>')
+        o.append(f'<rect x="{xs}" y="{y}" width="{xe_s - xs:.1f}" height="{rh - 2}" fill="currentColor" fill-opacity=".05"/>')
+        mx = max(rows[i]) or 1
+        for k, c in enumerate(rows[i]):
+            if not c:
+                continue
+            op = 0.18 + 0.82 * c / mx
+            if not live and k > k_cur:
+                op *= 0.3
+            o.append(f'<rect x="{xs + k * cw:.1f}" y="{y}" width="{max(cw - 1, 1):.1f}" height="{rh - 2}" '
+                     f'fill="{BLUE}" fill-opacity="{op:.2f}"/>')
+    if 0 <= k_cur < n_bins:
+        o.append(f'<rect x="{xs + k_cur * cw:.1f}" y="{y_strip - 3}" width="{max(cw, 2):.1f}" '
+                 f'height="{rh * n + 4}" fill="none" stroke="currentColor" stroke-width="1.5"/>')
+    hr = d0.ceil("h")
+    while hr <= d0 + pd.Timedelta(minutes=FLOW_STEP_MIN) * n_bins:
+        xh = xs + (hr - d0) / pd.Timedelta(minutes=FLOW_STEP_MIN) * cw
+        o.append(f'<line x1="{xh:.1f}" y1="{y_strip + rh * n}" x2="{xh:.1f}" y2="{y_strip + rh * n + 4}" stroke="currentColor" stroke-opacity=".4"/>')
+        o.append(f'<text x="{xh:.1f}" y="{y_axis}" font-size="10" text-anchor="middle" fill="currentColor" fill-opacity=".55">{hr:%H:%M}</text>')
+        hr += pd.Timedelta(hours=1)
+
+    # คำอธิบายสี + ที่มาของข้อมูล
+    lx = xs
+    for key in ("เดิน", "แผน", "เสีย", "ว่าง"):
+        if key == "ว่าง":
+            o.append(f'<rect x="{lx}" y="{y_legend - 10}" width="14" height="12" rx="2" fill="none" stroke="currentColor" stroke-opacity=".35"/>')
+        else:
+            o.append(f'<rect x="{lx}" y="{y_legend - 10}" width="14" height="12" rx="2" fill="{FLOW_COLORS[key]}"/>')
+        o.append(f'<text x="{lx + 20}" y="{y_legend}" font-size="12" fill="currentColor" fill-opacity=".75">{FLOW_LABELS[key]}</text>')
+        lx += 110
+    o.append(f'<text x="{xe_s}" y="{y_legend}" font-size="11" text-anchor="end" fill="currentColor" fill-opacity=".45">'
+             f'ข้อมูลใบงานถึง {data_max:%H:%M} · ชี้ที่รหัสเครื่องเพื่อดูผู้ปฏิบัติงาน · คิดจากใบงานจริง ไม่ใช่โมเดลจำลอง</text>')
+
+    # การ์ดรายละเอียดเมื่อชี้รหัสเครื่อง
+    #
+    # ทำด้วย CSS ล้วน เพราะ st.markdown ไม่รัน JavaScript: การ์ดซ่อนไว้ (opacity 0) แล้วกฎ
+    # svg:has(.fcN:hover) .ftN แสดงการ์ดใบที่ N เมื่อเมาส์อยู่บนรหัสเครื่องใบที่ N
+    # การ์ดต้องวาดไว้ท้ายสุดของ SVG ถึงจะลอยทับรหัสเครื่องตัวอื่น (SVG เรียงชั้นตามลำดับที่วาด)
+    # ใช้ class ไม่ใช้ id เพราะตัวกรอง HTML ของ Streamlit เติมคำนำหน้าให้ id ทำให้อ้างถึงไม่ได้
+    # เดิมใช้ <title> ของเบราว์เซอร์ ต้องชี้ค้างราว 1 วิ ตัวเล็ก และไม่มีชื่อคน (ผู้ใช้ขอ 2 ต.ค. 2569)
+    def cut(text, n):
+        text = str(text).strip()
+        return text if len(text) <= n else text[:n - 1] + "…"
+
+    TW, LH = 300, 18
+    rules = []
+    for nchip, X, Y, m, station in tips:
+        stt = m["status"]
+        head_col = FLOW_COLORS.get(stt, "#c8ccd4")
+        lines = [(f'{m["code"]} · {FLOW_LABELS[stt]}', True, head_col),
+                 (f'สถานี {station}', False, "#9aa3b2")]
+        named = [n for n in m["ops"] if n != "ไม่ระบุชื่อ"]
+        if named:
+            more = f' +{len(named) - 2}' if len(named) > 2 else ""
+            lines.append((cut("ผู้ปฏิบัติงาน: " + ", ".join(named[:2]), 40) + more, True, "#f0f2f6"))
+        elif stt != "ว่าง":
+            # ใบงานที่คร่อมช่วงนี้มีแต่ไม่มีชื่อคนในช่อง พนักงาน ของ MOS
+            lines.append(("ผู้ปฏิบัติงาน: (ใบงานไม่ระบุชื่อ)", False, "#f0f2f6"))
+        elif m["last_name"] and m["last_name"] != "ไม่ระบุชื่อ":
+            lines.append((cut(f'ผู้ปฏิบัติงานล่าสุด: {m["last_name"]}', 42), True, "#f0f2f6"))
+        else:
+            lines.append(("ผู้ปฏิบัติงาน: —", False, "#f0f2f6"))
+        if stt == "เดิน":
+            since = f' · เริ่ม {m["since"]:%H:%M}' if m["since"] is not None else ""
+            lines.append((f'งานในช่วงนี้ {m["jobs"]} ใบ{since}', False, "#d5d9e0"))
+            if m["item"]:
+                lines.append((cut(f'ชิ้นงาน: {m["item"]}', 42), False, "#d5d9e0"))
+            if m["job"]:
+                lines.append((f'ใบงาน {m["job"]}', False, "#9aa3b2"))
+        elif stt in ("แผน", "เสีย"):
+            lines.append((cut(f'สาเหตุ: {m["why"] or "-"}', 42), False, "#d5d9e0"))
+            if m["since"] is not None:
+                lines.append((f'เริ่มหยุด {m["since"]:%H:%M}', False, "#9aa3b2"))
+        else:
+            if m["last_end"] is not None:
+                nxt = f' · งานถัดไป {m["next_start"]:%H:%M}' if m["next_start"] is not None else ""
+                lines.append((f'ว่างตั้งแต่ {m["last_end"]:%H:%M}{nxt}', False, "#d5d9e0"))
+            elif m["next_start"] is not None:
+                lines.append((f'ยังไม่เริ่มงาน · งานแรก {m["next_start"]:%H:%M}', False, "#d5d9e0"))
+            else:
+                lines.append(("วันนี้ไม่มีใบงาน", False, "#d5d9e0"))
+        th_ = 14 + LH * len(lines)
+        tx = min(max(X + chip_w / 2 - TW / 2, 4), W - TW - 4)
+        ty = Y + chip_h + 8
+        if ty + th_ > H - 4:                   # ล้นขอบล่าง → แสดงเหนือรหัสเครื่องแทน
+            ty = Y - th_ - 8
+        o.append(f'<g class="ft ft{nchip}">'
+                 f'<rect x="{tx:.1f}" y="{ty:.1f}" width="{TW}" height="{th_}" rx="6" fill="#1c2130" '
+                 f'fill-opacity=".97" stroke="{head_col}" stroke-width="1.5"/>')
+        for j, (txt, bold, color) in enumerate(lines):
+            weight = ' font-weight="700"' if bold else ""
+            size = 13 if j == 0 else 12
+            o.append(f'<text x="{tx + 12:.1f}" y="{ty + 20 + LH * j:.1f}" font-size="{size}"{weight} '
+                     f'fill="{color}">{esc(txt)}</text>')
+        o.append("</g>")
+        rules.append(f"svg:has(.fc{nchip}:hover) .ft{nchip}")
+    if rules:
+        o.append("<style>.ft{opacity:0;pointer-events:none;transition:opacity .1s}"
+                 ".fk{cursor:pointer}.fk:hover rect{stroke:#ffffff;stroke-width:2;stroke-opacity:1}"
+                 + ",".join(rules) + "{opacity:1}</style>")
     o.append("</svg>")
     return "".join(o)
+
+
+def _hm(minutes: int):
+    """นาทีนับจากเที่ยงคืน → datetime.time สำหรับสไลเดอร์"""
+    return datetime(2000, 1, 1, minutes // 60, minutes % 60).time()
 
 
 with tab_flow:
@@ -1351,6 +1587,27 @@ with tab_flow:
         _ref, _live_ok = reference_time()
         _day0 = pd.Timestamp(sel_date)
         _s0 = _day0 + pd.Timedelta(hours=SHIFT_START_HOUR)
+        _lo, _hi = _flow_range(day_df, _day0)
+        _lo_m = int((_lo - _day0).total_seconds() // 60) // FLOW_STEP_MIN * FLOW_STEP_MIN
+        _hi_m = min((int((_hi - _day0).total_seconds() // 60) + FLOW_STEP_MIN - 1)
+                    // FLOW_STEP_MIN * FLOW_STEP_MIN, 23 * 60 + 55)
+        _pe = day_df.loc[~day_df["IsDowntime"], "End"]
+        _last_m = int(((min(_pe.max(), _hi) if not _pe.empty else _hi) - _day0).total_seconds() // 60)
+        _last_m = max(_lo_m, min(_hi_m, (_last_m + FLOW_STEP_MIN - 1) // FLOW_STEP_MIN * FLOW_STEP_MIN))
+
+        # ตำแหน่งเวลาเก็บใน flow_cursor (นาทีนับจากเที่ยงคืน) ตัวเดียว — ไม่ใช่ค่าของสไลเดอร์
+        #
+        # ของเดิมผูกเวลากับ key ของสไลเดอร์ แล้วให้โค้ดเลื่อนค่าเองตอนเล่น สไลเดอร์บนหน้าเว็บ
+        # ไม่ขยับตาม (ค้างที่ 15:55 ขณะภาพไปถึง 11:00) พอกดหยุด หน้าเว็บส่งค่าเก่าของสไลเดอร์
+        # กลับมาทับ เวลาเลยเด้งกลับ (ผู้ใช้เจอ 2 ต.ค. 2569)
+        # ตอนนี้สไลเดอร์เป็นแค่ตัวแสดงผล + รับการลาก: key เปลี่ยนทุกครั้งที่เวลาเปลี่ยน
+        # มันจึงถูกสร้างใหม่ ณ ตำแหน่งที่ถูกเสมอ และไม่มีค่าเก่าให้ส่งกลับมาทับ
+        if st.session_state.get("flow_day") != sel_date:      # เปลี่ยนวัน → เริ่มที่ใบงานสุดท้ายของวัน
+            st.session_state["flow_day"] = sel_date
+            st.session_state["flow_cursor"] = _last_m
+            st.session_state["flow_play"] = False
+            st.session_state["flow_nonce"] = st.session_state.get("flow_nonce", 0) + 1
+
         _modes = ["สด", "ย้อนดู"] if _live_ok else ["ย้อนดู"]
         # ค่าที่ค้างใน session อาจเป็น "สด" ทั้งที่วันนี้ไม่สดแล้ว ต้องรีเซ็ตก่อนสร้างปุ่ม
         if st.session_state.get("flow_mode") not in _modes:
@@ -1361,71 +1618,128 @@ with tab_flow:
         with _m2:
             st.caption(
                 "**สด** = เดินตามนาฬิกาจริง รีเฟรชทุกนาที (ใช้ได้เมื่อดูวันล่าสุดและข้อมูลสดภายใน 45 นาที) · "
-                "**ย้อนดู** = เลื่อนเวลาเองหรือกดเล่น เดินหน้า %d นาทีทุก 2 วินาที" % FLOW_STEP_MIN
+                f"**ย้อนดู** = ลากเวลาเอง หรือกดเล่น เดินหน้าทีละ {FLOW_STEP_MIN} นาที ทุก 2 วินาที · "
+                "กดหยุดแล้วค้างอยู่ที่เวลานั้น"
             )
         _playing = bool(st.session_state.get("flow_play")) and flow_mode == "ย้อนดู"
-        # เล่นย้อนดู: รีเฟรชทุก 2 วิ ให้แอนิเมชันชิ้นงาน (รอบละ 1.6 วิ) วิ่งจบก่อนวาดใหม่
-        _run_every = "2s" if _playing else ("60s" if flow_mode == "สด" else None)
+        _run_every = FLOW_TICK if _playing else ("60s" if flow_mode == "สด" else None)
 
-        def _flow_play(on: bool):          # callback: ตั้งค่าใน session ได้ ไม่ชนกับ widget
+        def _flow_play(on: bool):
             st.session_state["flow_play"] = on
 
-        def _flow_jump(to_time):
+        def _flow_jump(minute: int):
             st.session_state["flow_play"] = False
-            st.session_state["flow_t"] = to_time
+            st.session_state["flow_cursor"] = minute
+            st.session_state["flow_nonce"] = st.session_state.get("flow_nonce", 0) + 1
+
+        def _flow_slid(key: str):
+            """ลากสไลเดอร์ → ย้ายเวลาไปตรงนั้นและหยุดเล่น
+
+            รับเฉพาะสไลเดอร์ตัวที่แสดงอยู่ และเฉพาะเมื่อค่าต่างจากตอนสร้างจริง
+            ตอนเล่น สไลเดอร์ถูกสร้างใหม่ทุก 2 วิ บางรอบหน้าเว็บส่งค่าของตัวก่อนหน้าตามมาช้า
+            ระบบเห็นเป็น "ค่าเปลี่ยน" แล้วดึงเวลาถอยกลับหนึ่งช่วง
+            (เห็นในเบราว์เซอร์จริง 2 ต.ค. 2569: 07:55 → 08:00 → 07:55 ขณะเล่นโดยไม่มีใครแตะ)
+            """
+            if key != st.session_state.get("flow_sl_key"):
+                return                                  # สไลเดอร์ตัวเก่า ไม่ใช่คนลาก
+            v = st.session_state.get(key)
+            if v is None:
+                return
+            minute = v.hour * 60 + v.minute
+            if minute == int(key.rsplit("_", 1)[1]):
+                return                                  # ค่าเท่าตอนสร้าง ไม่ได้ลาก
+            st.session_state["flow_cursor"] = minute
+            st.session_state["flow_play"] = False
+            st.session_state["flow_nonce"] = st.session_state.get("flow_nonce", 0) + 1
 
         @st.fragment(run_every=_run_every)
         def flow_board(playing_at_def=_playing):
-            # ปุ่มเล่น/หยุดเปลี่ยนสถานะไว้ใน session แต่ run_every ถูกตรึงตอนประกาศ fragment
-            # ต้อง rerun ทั้งหน้าหนึ่งครั้งให้ประกาศใหม่ ไม่งั้นกดเล่นแล้วไม่เดิน
+            # run_every ถูกตรึงตอนประกาศ fragment ปุ่มเล่น/หยุดเปลี่ยนสถานะไว้ใน session
+            # ต้อง rerun ทั้งหน้าหนึ่งครั้งให้ประกาศใหม่ ไม่งั้นกดเล่นแล้วไม่เดิน หรือกดหยุดแล้วไม่หยุด
             if bool(st.session_state.get("flow_play")) != playing_at_def:
                 st.rerun()
 
             if flow_mode == "สด":
-                t = pd.Timestamp.now()
+                t = pd.Timestamp.now().floor("min")
                 live = True
             else:
                 live = False
-                _last = min(day_df["End"].max(), _day0 + pd.Timedelta(hours=23, minutes=55))
-                if "flow_t" not in st.session_state:
-                    st.session_state["flow_t"] = _last.floor("5min").time()
+                cur = max(_lo_m, min(_hi_m, int(st.session_state.get("flow_cursor", _last_m))))
                 if playing_at_def:
-                    nt = pd.Timestamp.combine(sel_date, st.session_state["flow_t"]) \
-                        + pd.Timedelta(minutes=FLOW_STEP_MIN)
-                    if nt.date() != sel_date or nt > _last + pd.Timedelta(minutes=FLOW_STEP_MIN):
+                    nxt = cur + FLOW_STEP_MIN
+                    if nxt > _hi_m:                 # ถึงปลายวัน → หยุดเอง ค้างที่ช่วงสุดท้าย
                         st.session_state["flow_play"] = False
+                        st.session_state["flow_cursor"] = _hi_m
                         st.rerun()
-                    st.session_state["flow_t"] = nt.time()
+                    cur = nxt
+                st.session_state["flow_cursor"] = cur
+                sl_key = f"flow_sl_{st.session_state.get('flow_nonce', 0)}_{cur}"
+                st.session_state["flow_sl_key"] = sl_key     # ตัวที่แสดงอยู่ ใช้กรองค่าเก่าใน _flow_slid
                 c_sl, c_b1, c_b2 = st.columns([6, 1, 1])
                 with c_sl:
-                    st.slider("เวลา", min_value=datetime.min.time(),
-                              max_value=datetime(2000, 1, 1, 23, 55).time(),
+                    st.slider(f"เวลา (ปลายช่วงสแกน {FLOW_STEP_MIN} นาที)",
+                              min_value=_hm(_lo_m), max_value=_hm(_hi_m), value=_hm(cur),
                               step=timedelta(minutes=FLOW_STEP_MIN), format="HH:mm",
-                              key="flow_t")
+                              key=sl_key, on_change=_flow_slid, args=(sl_key,))
                 with c_b1:
                     if playing_at_def:
-                        st.button("⏸ หยุด", width="stretch", on_click=_flow_play, args=(False,))
+                        st.button("⏸ หยุด", key="flow_pause", width="stretch",
+                                  on_click=_flow_play, args=(False,))
                     else:
-                        st.button("▶ เล่น", width="stretch", on_click=_flow_play, args=(True,))
+                        st.button("▶ เล่น", key="flow_go", width="stretch",
+                                  on_click=_flow_play, args=(True,))
                 with c_b2:
-                    st.button("⏮ เริ่มกะ", width="stretch", on_click=_flow_jump,
-                              args=(datetime(2000, 1, 1, SHIFT_START_HOUR, 0).time(),))
-                t = pd.Timestamp.combine(sel_date, st.session_state["flow_t"])
+                    st.button("⏮ เริ่มกะ", key="flow_home", width="stretch", on_click=_flow_jump,
+                              args=(SHIFT_START_HOUR * 60 + FLOW_STEP_MIN,))
+                t = _day0 + pd.Timedelta(minutes=cur)
 
             snap = flow_snapshot(day_df, t, _s0)
+            d0 = _day0 + pd.Timedelta(minutes=_lo_m)
+            n_bins, rows = flow_strip(day_df, d0, _day0 + pd.Timedelta(minutes=_hi_m))
             data_max = day_df.loc[~day_df["IsDowntime"], "End"].max()
             # ต้องเป็น st.markdown(unsafe_allow_html=True) ไม่ใช่ st.html
             # streamlit 1.59.2 st.html ไม่วาด <svg> ที่ฝังมา (ลองแล้วทั้งมี/ไม่มี <style> ก็ว่าง)
             # ส่วน markdown ส่ง HTML ผ่านตรง ๆ จึงเห็นภาพและ CSS animation ทำงาน (2 ต.ค. 2569)
-            st.markdown(flow_svg(snap, t, live, data_max, int((~day_df["IsDowntime"]).sum())),
+            st.markdown(flow_svg(snap, t, live, data_max, int((~day_df["IsDowntime"]).sum()),
+                                 (n_bins, rows, d0)),
                         unsafe_allow_html=True)
+
+            # ตารางเดียวกับการ์ดลอย แต่เห็นทุกเครื่องพร้อมกัน และใช้บนมือถือได้ (ชี้เมาส์ไม่ได้)
+            # ชื่อหัวพับต้องคงที่ ถ้าใส่เวลาลงไป Streamlit จะนับเป็นตัวใหม่แล้วพับปิดทุกครั้งที่ภาพขยับ
+            with st.expander("👷 ตารางเครื่องจักรและผู้ปฏิบัติงาน ในช่วงที่กำลังดู", expanded=False):
+                icon = {"เดิน": "🔵", "แผน": "🟠", "เสีย": "🔴", "ว่าง": "⚪"}
+                grid = []
+                for s_ in snap:
+                    for m in s_["mcs"]:
+                        if m["ops"]:
+                            who = ", ".join(m["ops"])
+                        elif m["last_name"]:
+                            who = f"(ล่าสุด) {m['last_name']}"
+                        else:
+                            who = "—"
+                        grid.append({
+                            "สถานี": s_["th"], "เครื่อง": m["code"],
+                            "สถานะ": f'{icon[m["status"]]} {FLOW_LABELS[m["status"]]}',
+                            "ผู้ปฏิบัติงาน": who, "งานในช่วง": m["jobs"],
+                            "ชิ้นงาน / สาเหตุหยุด": m["why"] if m["status"] in ("แผน", "เสีย") else m["item"],
+                            "ใบงาน": m["job"],
+                            "ตั้งแต่": f'{m["since"]:%H:%M}' if m["since"] is not None else "",
+                            "จบล่าสุด": f'{m["last_end"]:%H:%M}' if m["last_end"] is not None else "",
+                            "งานถัดไป": f'{m["next_start"]:%H:%M}' if m["next_start"] is not None else "",
+                        })
+                st.caption(f"ช่วง {t - pd.Timedelta(minutes=FLOW_STEP_MIN):%H:%M}–{t:%H:%M} · "
+                           f"{len(grid)} เครื่อง · ผู้ปฏิบัติงาน = ชื่อบนใบงานที่คร่อมช่วงนี้ "
+                           "ถ้าเครื่องว่างจะแสดงคนล่าสุด")
+                st.dataframe(pd.DataFrame(grid), hide_index=True, width="stretch",
+                             height=min(38 + 35 * len(grid), 560))
 
         flow_board()
         st.caption(
-            "เครื่องเดิน = มีใบงานผลิตคร่อมเวลานั้น · กำลังทำ = ใบงานที่เริ่มแล้วยังไม่จบ · "
-            "เสร็จ = ผลรวม Qty ของใบงานที่จบก่อนเวลานั้น · Utilization = นาทีที่เครื่องมีงาน ÷ "
-            f"(จำนวนเครื่อง × นาทีตั้งแต่ {SHIFT_START_HOUR:02d}:00) · "
-            "สถานีเรียงตามลำดับกระบวนการทั่วไป MOS ไม่ได้ติดตามว่าชิ้นไหนไปสถานีไหนต่อ"
+            f"แต่ละภาพ = ช่วงสแกน {FLOW_STEP_MIN} นาทีที่จบที่เวลาบนสไลเดอร์ · "
+            "สถานะเครื่อง = ช่วงนั้นเวลาส่วนใหญ่ทำอะไร (ผลิต = เดิน · P = หยุดตามแผน · B/BP = เสีย/ซ่อม · ไม่มีใบงาน = ว่าง) · "
+            "งาน 5 นาที = ใบงานผลิตที่คร่อมช่วง · สแกน = ใบงานที่เริ่มในช่วง · "
+            f"Utilization = นาทีที่เครื่องมีงาน ÷ (จำนวนเครื่อง × นาทีตั้งแต่ {SHIFT_START_HOUR:02d}:00) · "
+            "MOS ไม่ได้ติดตามว่าชิ้นไหนไปสถานีไหนต่อ ชิ้นที่วิ่งบนเส้นคือภาพแทนว่าสถานีนั้นมีงานป้อน"
         )
 
 # --- 3) การหยุดเครื่อง ---
