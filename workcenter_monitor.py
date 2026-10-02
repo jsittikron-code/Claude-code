@@ -1414,7 +1414,11 @@ with tab_flow:
 
             snap = flow_snapshot(day_df, t, _s0)
             data_max = day_df.loc[~day_df["IsDowntime"], "End"].max()
-            st.html(flow_svg(snap, t, live, data_max, int((~day_df["IsDowntime"]).sum())))
+            # ต้องเป็น st.markdown(unsafe_allow_html=True) ไม่ใช่ st.html
+            # streamlit 1.59.2 st.html ไม่วาด <svg> ที่ฝังมา (ลองแล้วทั้งมี/ไม่มี <style> ก็ว่าง)
+            # ส่วน markdown ส่ง HTML ผ่านตรง ๆ จึงเห็นภาพและ CSS animation ทำงาน (2 ต.ค. 2569)
+            st.markdown(flow_svg(snap, t, live, data_max, int((~day_df["IsDowntime"]).sum())),
+                        unsafe_allow_html=True)
 
         flow_board()
         st.caption(
