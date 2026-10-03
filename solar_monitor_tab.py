@@ -24,7 +24,9 @@ PERIODS = {"รายวัน": 0, "7 วัน": 7, "14 วัน": 14, "30 �
 # สีประจำเครื่อง #1–#11 (คงที่ทุกกราฟ จะได้จำได้ว่าสีไหนเครื่องไหน)
 INV_COLORS = ["#f59e0b", "#3b82f6", "#ef4444", "#10b981", "#8b5cf6", "#ec4899",
               "#14b8a6", "#f97316", "#6366f1", "#84cc16", "#06b6d4"]
-COLOR_SOLAR, COLOR_COST, COLOR_ALERT, COLOR_GRID2 = "#f59e0b", "#16a34a", "#dc2626", "#0ea5e9"
+# เส้นเป้าผลผลิตต่อวัน: MAX (PSH 4.5) เขียว · MIN (PSH 4.0) แดง · ตัวเลขที่อยู่ระหว่างกลางสีส้ม
+TARGET_MAX_COLOR, TARGET_MIN_COLOR, TARGET_MID_COLOR = "#22c55e", "#ef4444", "#f59e0b"
+COLOR_SOLAR, COLOR_COST, COLOR_ALERT, COLOR_GRID2 ="#f59e0b", "#16a34a", "#dc2626", "#0ea5e9"
 
 
 # ---------------------------------------------------------------------------
@@ -287,13 +289,19 @@ def render(kpi_card) -> None:
             d = trend.merge(tr_day, on="date")
             d["สัดส่วน"] = d["ac_kwh"] / d["รวมทั้งระบบ"] * 100
             d["เลือก"] = (d["date"] == end) if single else True
+            t_max, t_min = se.TARGET_KWH_DAY["MAX (PSH 4.5)"], se.TARGET_KWH_DAY["MIN (PSH 4.0)"]
+            # แกนวันแบบช่อง (ordinal) — 1 ช่องต่อ 1 วัน แท่งกว้างเต็มช่อง ไม่มีป้ายวันซ้ำ
+            x_day = alt.X("yearmonthdate(date):O", title="วันที่",
+                          axis=alt.Axis(format="%d/%m", formatType="time", labelAngle=0, labelOverlap=True))
             bars = (
                 alt.Chart(d)
                 .mark_bar()
                 .encode(
                     opacity=alt.condition(alt.datum["เลือก"], alt.value(1.0), alt.value(0.35)),
-                    x=alt.X("date:T", title="วันที่", axis=alt.Axis(format="%d/%m", labelAngle=0)),
-                    y=alt.Y("ac_kwh:Q", title="kWh"),
+                    x=x_day,
+                    # เผื่อที่ด้านบนให้ป้าย MAX และตัวเลขบนหัวแท่งไม่ชนขอบ
+                    y=alt.Y("ac_kwh:Q", title="kWh", scale=alt.Scale(
+                        domain=[0, max(t_max * 1.08, float(tr_day["รวมทั้งระบบ"].max()) * 1.1)], nice=False)),
                     color=alt.Color("เครื่อง:N", scale=inv_scale, title="อินเวอร์เตอร์",
                                     legend=alt.Legend(orient="bottom", columns=len(labels))),
                     order=alt.Order("inv_no:Q"),
@@ -306,18 +314,54 @@ def render(kpi_card) -> None:
                              alt.Tooltip("coverage_pct:Q", title="ข้อมูลครบ (%)", format=".0f")],
                 )
             )
-            rules = alt.Chart(pd.DataFrame({"y": list(se.TARGET_KWH_DAY.values()),
-                                            "เป้า": list(se.TARGET_KWH_DAY)})).mark_rule(
-                strokeDash=[6, 4], strokeWidth=1.5, color="#e2e8f0").encode(
-                y="y:Q", tooltip=["เป้า", alt.Tooltip("y:Q", title="kWh/วัน", format=",.0f")])
-            st.altair_chart((bars + rules).properties(height=360), width="stretch")
+            # โซนเป้า MIN–MAX + เส้น MAX (เขียว) / MIN (แดง) พร้อมป้ายบนเส้น
+            tgt = pd.DataFrame({
+                "y": [t_max, t_min], "ระดับ": ["MAX", "MIN"],
+                "ป้าย": [f"MAX {t_max:,.0f} kWh · PSH 4.5", f"MIN {t_min:,.0f} kWh · PSH 4.0"],
+                "สี": [TARGET_MAX_COLOR, TARGET_MIN_COLOR],
+                "ความหมาย": ["แดดปกติ — ผลิตได้เต็มศักยภาพ", "แดดไม่เอื้อ/ฤดูฝน — ต่ำกว่านี้ถือว่าผลิตต่ำ"],
+            })
+            band = alt.Chart(pd.DataFrame({"lo": [t_min], "hi": [t_max]})).mark_rect(
+                color=TARGET_MAX_COLOR, opacity=0.08).encode(y=alt.Y("lo:Q", axis=None), y2="hi:Q")
+            tgt_tip = [alt.Tooltip("ระดับ:N", title="เป้า"), alt.Tooltip("y:Q", title="kWh/วัน", format=",.0f"),
+                       alt.Tooltip("ความหมาย:N", title="ความหมาย")]
+            # ป้าย MAX/MIN อยู่บนแกนขวา (นอกพื้นที่กราฟ) ตรงความสูงของเส้นพอดี — วางป้ายในกราฟ
+            # ฝั่งไหนก็ชนตัวเลขบนหัวแท่งของวันที่ผลิตใกล้เป้าได้เสมอ (ลองแล้วทั้งซ้ายและขวา)
+            lbl = (f"datum.value == {t_max} ? 'MAX {t_max:,.0f} · PSH 4.5' : "
+                   f"datum.value == {t_min} ? 'MIN {t_min:,.0f} · PSH 4.0' : ''")
+            rules = alt.Chart(tgt).mark_rule(strokeDash=[8, 4], strokeWidth=2).encode(
+                y=alt.Y("y:Q", axis=alt.Axis(
+                    orient="right", values=[t_min, t_max], labelExpr=lbl, title=None, grid=False,
+                    ticks=False, domain=False, labelFontSize=12, labelFontWeight="bold", labelPadding=6,
+                    labelColor=alt.condition(f"datum.value == {t_max}",
+                                             alt.value(TARGET_MAX_COLOR), alt.value(TARGET_MIN_COLOR)))),
+                color=alt.Color("สี:N", scale=None, legend=None), tooltip=tgt_tip)
+            # ยอดรวมบนหัวแท่ง สีตามระดับ: เขียว ≥ MAX · ส้ม อยู่ในโซน · แดง < MIN (โชว์เมื่อไม่เกิน 31 วัน)
+            layers = [band, bars, rules]
+            if tr_day["date"].nunique() <= 31:
+                tops = tr_day.assign(สี=np.select(
+                    [tr_day["รวมทั้งระบบ"] >= t_max, tr_day["รวมทั้งระบบ"] >= t_min],
+                    [TARGET_MAX_COLOR, TARGET_MID_COLOR], TARGET_MIN_COLOR))
+                top_enc = dict(x=x_day, y=alt.Y("รวมทั้งระบบ:Q", axis=None),
+                               text=alt.Text("รวมทั้งระบบ:Q", format=",.0f"))
+                # ขอบเข้มรอบตัวเลข (halo) — วันที่ผลิตใกล้เป้า ตัวเลขจะทับเส้นประ ยังอ่านออก
+                layers.append(alt.Chart(tops).mark_text(dy=-6, fontSize=10, fontWeight="bold",
+                                                        stroke="#0b1220", strokeWidth=4, strokeJoin="round")
+                              .encode(**top_enc))
+                layers.append(alt.Chart(tops).mark_text(dy=-6, fontSize=10, fontWeight="bold")
+                              .encode(**top_enc, color=alt.Color("สี:N", scale=None, legend=None)))
+            # สเกล y ใช้ร่วมกัน (ความสูงตรงกันทุกชั้น) แต่แกนแยก: ซ้าย = kWh · ขวา = ป้าย MAX/MIN
+            st.altair_chart(alt.layer(*layers).resolve_scale(color="independent").resolve_axis(y="independent")
+                            .properties(height=380), width="stretch")
             ref = full_day if n_full else sys_day
             best = ref.loc[ref["ac_kwh"].idxmax()]
             worst = ref.loc[ref["ac_kwh"].idxmin()]
-            n_hit = int((full_day["ac_kwh"] >= target).sum())
+            n_max = int((full_day["ac_kwh"] >= t_max).sum())
+            n_min = int((full_day["ac_kwh"] >= t_min).sum())
             st.caption(
-                f"เส้นประ = เป้า {' / '.join(f'{v:,.0f}' for v in se.TARGET_KWH_DAY.values())} kWh/วัน · "
-                f"ถึงเป้า{target_name.split(' ')[0]} {n_hit}/{n_full} วัน · "
+                f"เส้น MAX {t_max:,.0f} / MIN {t_min:,.0f} kWh/วัน = {se.KWP_TOTAL:,.0f} kWp × PSH 4.5 / 4.0 × (1 − loss 20%) · "
+                f"ถึง MAX {n_max}/{n_full} วัน · ถึง MIN {n_min}/{n_full} วัน · "
+                f"ตัวเลขบนแท่ง เขียว ≥ MAX · ส้ม อยู่ระหว่าง MIN–MAX · แดง < MIN · "
                 f"ดีสุด {best['ac_kwh']:,.0f} ({_fmt_date(best['date'])}) · "
                 f"แย่สุด {worst['ac_kwh']:,.0f} ({_fmt_date(worst['date'])}){partial_note}"
             )

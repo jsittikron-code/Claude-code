@@ -71,7 +71,8 @@ N_INVERTERS = 11
 AC_TOTAL_KW = RATED_KW * N_INVERTERS
 KWP_TOTAL = 1243.0          # กำลังติดตั้ง DC (2,260 แผง × 550 W)
 # เป้าผลผลิตต่อวัน = kWp × PSH × (1 − System loss 20%) ตามสไลด์ผู้บริหาร Rev2
-TARGET_KWH_DAY = {"ปกติ (PSH 4.5)": 4475.0, "ฤดูฝน (PSH 4.0)": 3978.0}
+# MAX = แดดปกติ (PSH 4.5) · MIN = แดดไม่เอื้อ/ฤดูฝน (PSH 4.0) — ต่ำกว่า MIN คือผลผลิตต่ำกว่าที่ควร
+TARGET_KWH_DAY = {"MAX (PSH 4.5)": 4475.0, "MIN (PSH 4.0)": 3978.0}
 
 # ค่าผิดปกติที่ต้องตัดทิ้ง (พบจริงในข้อมูล ก.ย. 69 — ดูชีต "คุณภาพข้อมูล" ของฐานข้อมูลหลัก)
 PAC_MAX_KW = 150.0          # Total AC Output Power ตอนกลางคืนเด้งเป็นค่า uint32 มหาศาล
@@ -937,7 +938,7 @@ def run_update(rebuild: bool = False, check: bool = False, out=print) -> int:
             " (ไฟล์ที่ได้มีข้อมูลเฉพาะช่วงวันที่ที่เลือกไว้)")
     ld = daily[daily["date"] == last].sort_values("inv_no")
     out(f"\n  ผลผลิตวัน {last:%d/%m/%Y}  รวม {ld['ac_kwh'].sum():,.0f} kWh"
-        f"  (เป้าฤดูฝน {TARGET_KWH_DAY['ฤดูฝน (PSH 4.0)']:,.0f} · ปกติ {TARGET_KWH_DAY['ปกติ (PSH 4.5)']:,.0f})")
+        f"  (เป้า MIN {TARGET_KWH_DAY['MIN (PSH 4.0)']:,.0f} · MAX {TARGET_KWH_DAY['MAX (PSH 4.5)']:,.0f})")
     pl = partial_last_day(daily)
     if pl is not None:
         out(f"  (วันนี้ยังไม่ครบวัน — ข้อมูลถึง {pl:%H:%M} น. แดชบอร์ดจะไม่นับวันนี้ในค่าเฉลี่ย/เป้า"
