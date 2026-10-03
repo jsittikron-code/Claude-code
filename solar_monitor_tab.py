@@ -9,7 +9,7 @@ solar_etl.py ไฟล์นี้มีแต่การแสดงผล ห
 
 from __future__ import annotations
 
-import time
+import threading
 import traceback
 
 import altair as alt
@@ -76,58 +76,101 @@ UPDATE_HELP = ("ย้ายไฟล์ EVE ที่ดึงลง Downloads 
                "ทำงานเหมือนดับเบิลคลิกไอคอน อัปเดต Solar บนเดสก์ท็อป กดซ้ำได้ ข้อมูลไม่ซ้ำ")
 
 
-def _update_now() -> None:
-    """รันอัปเดตทันที แสดงความคืบหน้าบนหน้าจอ เก็บผลไว้ใน session แล้วรีเฟรชหน้า"""
-    lines: list[str] = []
-    flog = se.FileLog()
-    with st.status("กำลังอัปเดตข้อมูล Solar จาก Downloads ...", expanded=True) as box:
-        ph = st.empty()
+# การอัปเดตทำในเธรดเบื้องหลังของโปรเซสแดชบอร์ด ไม่ใช่ในรอบรันสคริปต์ของผู้กด
+# ทำไม: ถ้าทำในรอบรันสคริปต์ ผู้ใช้กดอะไรก็ตาม (เปลี่ยนช่วงเวลา / F5 / ปิดแท็บ) ระหว่างรอ ~20 วินาที
+# Streamlit จะหยุดสคริปต์กลางคัน อาจค้างอยู่หลังเขียนฐานแถวดิบแต่ก่อนสรุปรายวัน (ทดสอบแล้วเกิดจริง)
+# เธรดนี้อยู่ต่อแม้หน้าเว็บปิด และทุกคนใน LAN ที่เปิดแท็บนี้อยู่จะเห็นว่ากำลังอัปเดต
+_JOB: dict = {"thread": None, "lines": [], "code": None, "start": None, "end": None, "path": None, "by": ""}
+_JOB_GUARD = threading.Lock()
+
+
+def _job_running() -> bool:
+    t = _JOB["thread"]
+    return t is not None and t.is_alive()
+
+
+def _start_update(user: str) -> bool:
+    """เริ่มอัปเดตในเธรดเบื้องหลัง — False ถ้ามีรอบกำลังทำอยู่แล้ว"""
+    with _JOB_GUARD:
+        if _job_running():
+            return False
+        flog = se.FileLog()
+        lines: list[str] = []
+        _JOB.update(lines=lines, code=None, start=pd.Timestamp.now(), end=None, path=flog.path, by=user)
 
         def out(s: str = "") -> None:
             flog(str(s))
             lines.extend(str(s).split("\n"))
-            ph.code("\n".join(lines[-25:]), language=None)
 
-        t0 = time.time()
-        try:
-            with se.update_lock():
-                code = se.run_update(out=out)
-        except se.UpdateBusy as e:
-            out(f"*** {e}")
+        def work() -> None:
             code = 1
-        except Exception:
-            out(traceback.format_exc())
-            code = 1
-        finally:
-            flog.close()
-        box.update(label="อัปเดตเสร็จ" if code == 0 else "อัปเดตไม่สำเร็จ",
-                   state="complete" if code == 0 else "error", expanded=False)
-    st.session_state["solar_last_update"] = {
-        "when": pd.Timestamp.now(), "code": code, "secs": time.time() - t0,
-        "log": "\n".join(lines), "path": flog.path,
-    }
-    st.rerun()          # โหลด parquet ชุดใหม่ (ลายเซ็นไฟล์เปลี่ยน → แคชเดิมไม่ถูกใช้)
+            try:
+                with se.update_lock():
+                    code = se.run_update(out=out)
+            except se.UpdateBusy as e:
+                out(f"*** {e}")
+            except Exception:
+                out(traceback.format_exc())
+            finally:
+                flog.close()
+                _JOB["code"], _JOB["end"] = code, pd.Timestamp.now()
+
+        t = threading.Thread(target=work, name="solar-update", daemon=True)
+        _JOB["thread"] = t
+        t.start()
+    return True
+
+
+@st.fragment(run_every="1s")
+def _progress() -> None:
+    """แสดงความคืบหน้าทุก 1 วินาทีระหว่างอัปเดต เสร็จแล้วรีเฟรชทั้งหน้าครั้งเดียวเพื่อโหลดข้อมูลใหม่"""
+    if _job_running():
+        with st.status(f"กำลังอัปเดตข้อมูล Solar จาก Downloads ... (เริ่ม {_JOB['start']:%H:%M:%S}"
+                       + (f" โดย {_JOB['by']}" if _JOB["by"] else "") + ")", expanded=True):
+            st.code("\n".join(_JOB["lines"][-25:]) or "เริ่มต้น ...", language=None)
+        return
+    # เพิ่งเสร็จและผู้ใช้คนนี้ยังไม่ได้เห็นผล → รีเฟรชทั้งหน้า (ลายเซ็น parquet เปลี่ยน แคชเดิมไม่ถูกใช้)
+    if _JOB["end"] is not None and st.session_state.get("solar_seen_job") != _JOB["end"]:
+        st.session_state["solar_seen_job"] = _JOB["end"]
+        st.rerun(scope="app")
+
+
+def _update_controls(key: str) -> None:
+    """ปุ่มอัปเดต (หรือป้ายกำลังอัปเดต) — วางในแถวตัวเลือกด้านบน"""
+    if _job_running():
+        st.button(":material/hourglass_top: กำลังอัปเดต ...", key=key, disabled=True)
+        return
+    if st.button(":material/sync: อัปเดต Solar", type="primary", key=key, help=UPDATE_HELP):
+        import auth                                    # โมดูลเดียวกับที่ energy_monitor ใช้ล็อกอิน
+        if not _start_update(auth.current_user()):
+            st.toast("มีการอัปเดตกำลังทำงานอยู่ รอสักครู่", icon=":material/hourglass_top:")
+        st.rerun()
 
 
 def _last_update_panel() -> None:
-    """ผลการกดอัปเดตครั้งล่าสุดของผู้ใช้คนนี้ — สรุปสั้น ๆ + log เต็มให้กางดู"""
-    res = st.session_state.get("solar_last_update")
-    if not res:
+    """ความคืบหน้า (ระหว่างอัปเดต) หรือผลการอัปเดตครั้งล่าสุด — สรุปสั้น ๆ + log เต็มให้กางดู"""
+    if _job_running() or (_JOB["end"] is not None and st.session_state.get("solar_seen_job") != _JOB["end"]):
+        _progress()
         return
-    key_lines = [ln.strip() for ln in res["log"].splitlines()
+    if _JOB["end"] is None:
+        return
+    log = "\n".join(_JOB["lines"])
+    key_lines = [ln.strip() for ln in log.splitlines()
                  if ln.strip().startswith(("แถวในฐาน", "ข้อมูลตั้งแต่", "ผลผลิตวัน", "***", "ย้าย"))]
-    msg = (f"อัปเดตเมื่อ {res['when']:%H:%M:%S} ({res['secs']:.0f} วินาที) — "
+    secs = (_JOB["end"] - _JOB["start"]).total_seconds()
+    msg = (f"อัปเดตล่าสุด {_JOB['end']:%d/%m %H:%M:%S} ({secs:.0f} วินาที"
+           + (f" · โดย {_JOB['by']}" if _JOB["by"] else "") + ") — "
            + " · ".join(k for k in key_lines if not k.startswith("ย้าย")))
     n_moved = sum(1 for k in key_lines if k.startswith("ย้าย"))
     if n_moved:
         msg += f" · ย้ายไฟล์ใหม่ {n_moved} ไฟล์"
     # แดง = ล้ม · เหลือง = สำเร็จแต่มีเรื่องต้องดู (ไม่มีไฟล์ใหม่ / ข้อมูลยังไม่ถึงวันนี้) · เขียว = เรียบร้อย
-    show = (st.error if res["code"] != 0 else
+    show = (st.error if _JOB["code"] != 0 else
             st.warning if any(k.startswith("***") for k in key_lines) else st.success)
     show(msg, icon=":material/sync:")
     with st.expander("ดูรายละเอียดการอัปเดตครั้งล่าสุด"):
-        st.code(res["log"], language=None)
-        st.caption(f"บันทึกไว้ที่ {res['path']}")
+        st.code(log, language=None)
+        st.caption(f"บันทึกไว้ที่ {_JOB['path']}")
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +185,7 @@ def render(kpi_card) -> None:
             "(ไฟล์จะลงใน Downloads)\n"
             "2. กดปุ่ม **อัปเดต Solar** ด้านล่าง หรือดับเบิลคลิกไอคอน **อัปเดต Solar** บนเดสก์ท็อป"
         )
-        if st.button(":material/sync: อัปเดต Solar", type="primary", key="solar_update_empty", help=UPDATE_HELP):
-            _update_now()
+        _update_controls("solar_update_empty")
         _last_update_panel()
         return
     daily_all, prof_all = _load(sig)
@@ -153,8 +195,7 @@ def render(kpi_card) -> None:
 
     # ---- ปุ่มอัปเดต + ตัวเลือกช่วงเวลา + เป้า ----
     with st.container(horizontal=True, vertical_alignment="center"):
-        if st.button(":material/sync: อัปเดต Solar", type="primary", key="solar_update_btn", help=UPDATE_HELP):
-            _update_now()
+        _update_controls("solar_update_btn")
         period = st.segmented_control("ช่วงเวลา", list(PERIODS), default="30 วัน",
                                       key="solar_period") or "30 วัน"
         if PERIODS[period] == 0:
@@ -187,16 +228,20 @@ def render(kpi_card) -> None:
     sys_slot = prof.groupby(["date", "slot", "tod"], as_index=False)["pac_mean"].sum()
     n_days = len(sys_day)
     ac_total, dc_total = sys_day["ac_kwh"].sum(), sys_day["dc_kwh"].sum()
-    # วันล่าสุดที่ดึง export ระหว่างวัน (ยังไม่ครบวัน) ไม่เอามานับค่าเฉลี่ย/ถึงเป้า/ดีสุด-แย่สุด
-    # ไม่งั้นทุกครั้งที่กดอัปเดตตอนสาย ค่าเฉลี่ยจะดิ่งและ "แย่สุด" จะชี้วันนี้เสมอ
-    # โหมดรายวันไม่ตัดทิ้ง (ผู้ใช้เลือกดูวันนั้นเอง) แต่ยังบอกว่าไม่ครบวัน
-    partial = se.partial_last_day(daily_all) if end == last else None
-    full_day = sys_day[sys_day["date"] != last] if (partial is not None and not single) else sys_day
+    # วันที่ข้อมูลไม่ครบวัน (ดึง export ระหว่างวัน / export รอบก่อนจบตอนบ่าย) ไม่เอามานับค่าเฉลี่ย
+    # ถึงเป้า ดีสุด-แย่สุด — ไม่งั้นวันพวกนี้ดูเหมือนโรงงาน Solar ผลิตตก ทั้งที่แค่ข้อมูลขาด
+    # โหมดรายวันไม่ตัดทิ้ง (ผู้ใช้เลือกดูวันนั้นเอง) แต่บอกว่าไม่ครบวัน
+    gaps = se.partial_days(daily)
+    full_day = sys_day if single else sys_day[~sys_day["date"].isin(list(gaps))]
     n_full = len(full_day)
     avg_day = full_day["ac_kwh"].sum() / n_full if n_full else 0
-    partial_note = ("" if partial is None else
-                    f" · ข้อมูลถึง {partial:%H:%M} ยังไม่ครบวัน" if single else
-                    f" · ไม่นับ {_fmt_date(last)} (ข้อมูลถึง {partial:%H:%M} ยังไม่ครบวัน)")
+    if not gaps:
+        partial_note = ""
+    elif single:
+        partial_note = f" · ข้อมูลถึง {next(iter(gaps.values())):%H:%M} ยังไม่ครบวัน"
+    else:
+        partial_note = (" · ไม่นับวันที่ข้อมูลไม่ครบ "
+                        + ", ".join(f"{pd.Timestamp(d):%d/%m} (ถึง {t:%H:%M})" for d, t in gaps.items()))
     peak = sys_slot.loc[sys_slot["pac_mean"].idxmax()] if not sys_slot.empty else None
     summ = se.inverter_summary(daily)
     al = se.alerts(daily)
@@ -430,7 +475,10 @@ def render(kpi_card) -> None:
     # ---- เจาะรายเครื่อง ----
     with st.container(border=True, key="solar_inv_detail"):
         st.subheader("เจาะรายเครื่อง — ราย MPPT รายวัน")
-        opts = summ.sort_values("inv_no")
+        # รายชื่อจากช่วง 14 วัน (โหมดรายวัน) — เครื่องที่ไม่มีข้อมูลวันที่เลือกต้องยังเลือกดูแนวโน้มได้
+        # เพราะนั่นคือมุมที่ต้องใช้หาว่ามันหายไปตั้งแต่เมื่อไร
+        opts = (trend.groupby("sn", as_index=False)["inv_no"].first()
+                .sort_values("inv_no").reset_index(drop=True))
         sel = st.selectbox("อินเวอร์เตอร์", opts["sn"].tolist(),
                            format_func=lambda s: f"#{int(opts.loc[opts['sn'] == s, 'inv_no'].iloc[0])}  SN {s}",
                            key="solar_detail_sn")
@@ -442,7 +490,8 @@ def render(kpi_card) -> None:
         dm = se.mppt_daily(g)
         if not dm.empty:
             dm["เทียบเฉลี่ย"] = dm["ratio"] * 100
-            dm["วันที่"] = dm["date"].dt.strftime("%d/%m")
+            dm = dm[dm["date"] > dm["date"].max() - pd.Timedelta(days=60)]   # 60 วันล่าสุดพอ ไม่งั้นสูงเป็นเมตร
+            dm["วันที่"] = dm["date"].dt.strftime("%d/%m/%y")                # ต้องมีปี ข้ามปีแล้ววันซ้ำกัน
             day_sort = list(dict.fromkeys(dm.sort_values("date", ascending=False)["วันที่"]))
             base = alt.Chart(dm).encode(
                 x=alt.X("mppt:O", title="MPPT"),

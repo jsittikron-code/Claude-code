@@ -214,8 +214,12 @@ def prepare(dry_run: bool = False) -> dict:
         dest = os.path.join(raw, folder, os.path.basename(f))
         target = moved
         if os.path.exists(dest):
-            if (os.path.samefile(f, dest) or os.path.getsize(f) == os.path.getsize(dest)
-                    or _same_content(f, dest)):
+            try:
+                same = (os.path.samefile(f, dest) or os.path.getsize(f) == os.path.getsize(dest)
+                        or _same_content(f, dest))
+            except FileNotFoundError:              # อีกรอบ (ไอคอน/ปุ่ม) ย้ายไฟล์นี้ไปแล้วระหว่างทาง
+                continue
+            if same:
                 dup += 1
                 continue
             dest = _free_name(dest)
@@ -530,13 +534,24 @@ def write_summaries(daily: pd.DataFrame, prof: pd.DataFrame) -> None:
         _replace(tmp, os.path.join(pq_dir, name))
 
 
+def partial_days(daily: pd.DataFrame) -> dict:
+    """วันที่ข้อมูลไม่ครบวัน → {date: เวลาข้อมูลล่าสุดของวันนั้น}
+
+    ไม่ใช่แค่วันล่าสุด: export แต่ละรอบครอบคลุมช่วงวันที่ที่เลือกไว้ใน EVE ถ้ารอบก่อนดึงตอนบ่าย
+    แล้วรอบถัดไปเริ่มวันรุ่งขึ้น ช่วงบ่ายของวันนั้นจะหายถาวร (เจอจริง 15 ก.ย. 69 ข้อมูลหยุด 15:41
+    ทั้งที่ทุกเครื่องยังผลิต ~10 kW) — วันแบบนี้ต้องไม่นับเป็นวันผลผลิตต่ำ"""
+    if daily.empty:
+        return {}
+    t = daily.groupby("date")["last_ts"].max()
+    frac = t.dt.hour + t.dt.minute / 60
+    return {d: ts for d, ts in t[frac < DAY_COMPLETE_HOUR].items()}
+
+
 def partial_last_day(daily: pd.DataFrame):
     """วันล่าสุดยังไม่ครบวันไหม (ดึง EVE ก่อนแดดหมด) → คืนเวลาข้อมูลล่าสุดของวันนั้น หรือ None"""
     if daily.empty:
         return None
-    last = daily["date"].max()
-    t = daily.loc[daily["date"] == last, "last_ts"].max()
-    return t if t.hour + t.minute / 60 < DAY_COMPLETE_HOUR else None
+    return partial_days(daily).get(daily["date"].max())
 
 
 # ===========================================================================
@@ -737,6 +752,14 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
         out.append({"level": "info", "inv_no": 0,
                     "text": f"ระบบถูกจำกัดกำลัง (Zero-export) อย่างน้อย 1 ชม. ใน {len(cur)} วัน — {lst} · "
                             "ผลผลิตวันนั้นต่ำเพราะโรงงานโหลดต่ำ ไม่ใช่เพราะแดดหรือเครื่องเสีย"})
+
+    # วันที่ข้อมูลขาดช่วงบ่าย (ไม่ใช่วันล่าสุด ซึ่งปกติยังไม่ครบเพราะเพิ่งดึง) — เติมได้ด้วยการดึงซ้ำ
+    gaps = {d: t for d, t in partial_days(daily).items() if d != daily["date"].max()}
+    if gaps:
+        lst = ", ".join(f"{fmt_d(d)} (ถึง {t:%H:%M})" for d, t in gaps.items())
+        out.append({"level": "info", "inv_no": 0,
+                    "text": f"ข้อมูลไม่ครบวัน {len(gaps)} วัน — {lst} · ยอดวันนั้นต่ำกว่าจริงและไม่ถูกนับในค่าเฉลี่ย "
+                            "เติมได้โดยดึงรายงานวันนั้นซ้ำจาก EVE แล้วกดอัปเดต (ระบบตัดข้อมูลซ้ำให้เอง)"})
     order = {"error": 0, "warning": 1, "info": 2}
     return sorted(out, key=lambda a: (order[a["level"]], a["inv_no"]))
 
@@ -776,20 +799,26 @@ def _start_log() -> str:
     path = os.path.join(LOG_DIR, time.strftime("solar_%Y%m%d_%H%M%S.log"))
     sys.stdout = _Tee(path)
     sys.stderr = sys.stdout
-    old = sorted(f for f in os.listdir(LOG_DIR) if f.startswith("solar_") and f.endswith(".log"))
+    _prune_logs("solar")
+    return path
+
+
+def _prune_logs(prefix: str) -> None:
+    """เก็บ log ของแต่ละช่องทางแยกกัน (solar_ = ไอคอน .bat · solar_web_ = ปุ่มในแดชบอร์ด)
+    ไม่งั้นกดปุ่มในแดชบอร์ดบ่อย ๆ จะไล่ลบ log ของรอบที่รันจากไอคอนทิ้งหมด"""
+    pat = re.compile(rf"{prefix}_\d{{8}}_\d{{6}}\.log")
+    old = sorted(f for f in os.listdir(LOG_DIR) if pat.fullmatch(f))
     for f in old[:-LOG_KEEP]:
         try:
             os.remove(os.path.join(LOG_DIR, f))
         except OSError:
             pass
-    return path
 
 
 # ===========================================================================
 # ขั้นตอนอัปเดตทั้งชุด — ปุ่ม อัปเดต Solar.bat และปุ่มในแดชบอร์ดเรียกฟังก์ชันเดียวกันนี้
 # ===========================================================================
 LOCK_PATH = os.path.join(HERE, "logs", "_solar_update.lock")
-LOCK_STALE_SEC = 15 * 60    # ล็อกค้างนานกว่านี้ = รอบก่อนถูกปิดกลางคัน ปลดให้อัตโนมัติ
 
 
 class UpdateBusy(RuntimeError):
@@ -798,31 +827,41 @@ class UpdateBusy(RuntimeError):
 
 @contextlib.contextmanager
 def update_lock():
-    """กันสองรอบเขียน parquet ชนกัน — ไอคอนบนเดสก์ท็อปกับปุ่มในแดชบอร์ดอยู่คนละโปรเซส"""
+    """กันสองรอบเขียน parquet ชนกัน — ไอคอนบนเดสก์ท็อปกับปุ่มในแดชบอร์ดอยู่คนละโปรเซส
+
+    ใช้ล็อกของ Windows (msvcrt.locking) ไม่ใช่ "มีไฟล์ = ล็อก" เพราะถ้าผู้ใช้ปิดหน้าต่าง .bat
+    กลางคัน ไฟล์ล็อกจะค้าง แล้วทั้งไอคอนและปุ่มในแดชบอร์ดจะปฏิเสธทุกคนไป 15 นาที
+    (ทดสอบแล้ว 2 ต.ค. 69) — ล็อกของ OS ปลดเองทันทีที่โปรเซสตาย ไฟล์ไม่ต้องลบ
+    ล็อกผูกกับ handle จึงกันสองเธรดในโปรเซสแดชบอร์ดเดียวกันได้ด้วย"""
+    import msvcrt
     os.makedirs(os.path.dirname(LOCK_PATH), exist_ok=True)
-    if os.path.exists(LOCK_PATH) and time.time() - os.path.getmtime(LOCK_PATH) > LOCK_STALE_SEC:
-        try:
-            os.remove(LOCK_PATH)
-        except OSError:
-            pass
+    fd = os.open(LOCK_PATH, os.O_RDWR | os.O_CREAT)
     try:
-        fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    except OSError:
+        os.close(fd)
         try:
-            with open(LOCK_PATH, encoding="utf-8") as f:
+            with open(LOCK_PATH + ".info", encoding="utf-8") as f:
                 who = f.read().strip()
         except OSError:
             who = ""
-        raise UpdateBusy(f"มีการอัปเดต Solar กำลังทำงานอยู่ ({who}) — รอให้เสร็จก่อนแล้วกดใหม่")
+        raise UpdateBusy("มีการอัปเดต Solar กำลังทำงานอยู่" + (f" ({who})" if who else "")
+                         + " — รอให้เสร็จก่อนแล้วกดใหม่")
     try:
-        os.write(fd, f"เริ่ม {time.strftime('%H:%M:%S')} pid {os.getpid()}".encode("utf-8"))
-        os.close(fd)
+        try:
+            with open(LOCK_PATH + ".info", "w", encoding="utf-8") as f:
+                f.write(f"เริ่ม {time.strftime('%H:%M:%S')}")
+        except OSError:
+            pass
         yield
     finally:
         try:
-            os.remove(LOCK_PATH)
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
+        os.close(fd)
 
 
 def run_update(rebuild: bool = False, check: bool = False, out=print) -> int:
@@ -933,6 +972,7 @@ class FileLog:
         os.makedirs(LOG_DIR, exist_ok=True)
         self.path = os.path.join(LOG_DIR, time.strftime(f"{prefix}_%Y%m%d_%H%M%S.log"))
         self._f = open(self.path, "a", encoding="utf-8")
+        _prune_logs(prefix)
 
     def __call__(self, s: str = "") -> None:
         self._f.write(s + "\n")
@@ -954,7 +994,7 @@ def main(argv=None) -> int:
     print(f"  {time.strftime('%Y-%m-%d %H:%M:%S')}"
           + (f"  บันทึกผลรอบนี้ไว้ที่ {log_path}" if log_path else "  (โหมดตรวจ ไม่เขียนไฟล์)"))
     if a.check:
-        return run_update(check=True)
+        return run_update(rebuild=a.rebuild, check=True)
     try:
         with update_lock():
             code = run_update(rebuild=a.rebuild)
