@@ -71,6 +71,14 @@ N_INVERTERS = 11
 AC_TOTAL_KW = RATED_KW * N_INVERTERS
 KWP_TOTAL = 1243.0          # กำลังติดตั้ง DC (2,260 แผง × 550 W)
 # เป้าผลผลิตต่อวัน = kWp × PSH × (1 − System loss 20%) ตามสไลด์ผู้บริหาร Rev2
+# พิกัดอุปกรณ์ (จากแบบ SLD CUE-IE-006 / datasheet) — ใช้เป็นเส้นอ้างอิงในกราฟกระแส
+AC_IMAX_A = 158.8           # กระแส AC สูงสุดต่อเฟสของอินเวอร์เตอร์ SUN-100K-G03
+MPPT_IMAX_A = 40.0          # กระแส DC เข้าสูงสุดต่อ MPPT
+STRING_IMP_A = 13.42        # กระแสที่จุดกำลังสูงสุดของสตริง (แผง EVE GREP 550 ที่ STC)
+PHASES = {"R": "iac_r", "S": "iac_s", "T": "iac_t"}
+AC_V_COLS = ["vac_r", "vac_s", "vac_t"]
+PHASE_IMBAL_MIN_A = 5.0     # คิดความไม่สมดุลเฉพาะตอนกระแสเฉลี่ย ≥ 5 A (ตอนเช้า/เย็นกระแสน้อย % จะแกว่ง)
+
 # MAX = แดดปกติ (PSH 4.5) · MIN = แดดไม่เอื้อ/ฤดูฝน (PSH 4.0) — ต่ำกว่า MIN คือผลผลิตต่ำกว่าที่ควร
 TARGET_KWH_DAY = {"MAX (PSH 4.5)": 4475.0, "MIN (PSH 4.0)": 3978.0}
 
@@ -450,6 +458,14 @@ def ingest(rebuild: bool = False, dry_run: bool = False, log=print) -> dict:
 # ===========================================================================
 # ขั้น 3 — สรุปรายวัน + โปรไฟล์ 15 นาที
 # ===========================================================================
+def phase_imbalance(df: pd.DataFrame) -> pd.Series:
+    """% ความไม่สมดุลกระแส AC 3 เฟสรายแถว = (สูงสุด − ต่ำสุด) ÷ เฉลี่ย × 100
+    ว่างเมื่อกระแสเฉลี่ยต่ำกว่า PHASE_IMBAL_MIN_A (ตอนเช้า/เย็น % แกว่งจนไม่มีความหมาย)"""
+    i = df[list(PHASES.values())]
+    avg = i.mean(axis=1)
+    return ((i.max(axis=1) - i.min(axis=1)) / avg * 100).where(avg >= PHASE_IMBAL_MIN_A)
+
+
 def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     valid = df[df["flag"] == 0]
 
@@ -481,16 +497,22 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     for i in MPPT:
         agg[f"e{i}"] = (f"e{i}", "sum")
         agg[f"pdc{i}_max"] = (f"pdc{i}", "max")
+        agg[f"idc{i}_max"] = (f"idc{i}", "max")
+    for c in PHASES.values():
+        agg[f"{c}_max"] = (c, "max")
     daily = valid.groupby(["sn", "date"], as_index=False).agg(**agg)
     daily["ecum_delta"] = daily["ecum_max"] - daily["ecum_min"]
 
     # สุขภาพสตริง: median ของ Vdc / Pdc / Idc ช่วงแดดเต็ม (10–14 น.) ขณะเครื่องผลิตจริง
     m = valid[valid["hour"].between(MIDDAY_HOURS[0], MIDDAY_HOURS[1] - 1)
               & (valid["pdc_kw"] > MIDDAY_MIN_PDC_KW)]
-    midc = PDC_COLS + VDC_COLS + IDC_COLS
+    midc = PDC_COLS + VDC_COLS + IDC_COLS + list(PHASES.values()) + AC_V_COLS
     mid_med = m.groupby(["sn", "date"])[midc].median()
     mid_med.columns = [f"{c}_mid" for c in midc]
     daily = daily.merge(mid_med.reset_index(), on=["sn", "date"], how="left")
+    # ความไม่สมดุลกระแส AC 3 เฟส ช่วงแดดเต็ม (ค่ากลางของทั้งวัน) — สูงผิดปกติ = เฟสใดเฟสหนึ่งมีปัญหา
+    mi = m.assign(_imb=phase_imbalance(m)).groupby(["sn", "date"])["_imb"].median().rename("phase_imbal_pct")
+    daily = daily.merge(mi.reset_index(), on=["sn", "date"], how="left")
 
     # จำนวนสตริงต่อ MPPT (1 หรือ 2) — อนุมานจาก "ประวัติทั้งหมด" ไม่ใช่ช่วงที่ผู้ใช้เลือก
     # ถ้าอนุมานจากช่วงที่เลือก MPPT 2 สตริงที่สตริงขาดไปหนึ่ง (กระแสหายครึ่ง) จะถูกนับใหม่เป็น
