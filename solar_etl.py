@@ -106,6 +106,10 @@ SHIFT_HOURS = (7, 16)       # กะผลิต P1 07:00–16:00
 # เทียบ MPPT ที่สูงสุดในเครื่อง ≥ 75% = 2 สตริง) แล้วเทียบพลังงาน "ต่อสตริง" แทน
 STRINGS_2_RATIO = 0.75
 MPPT_ALERT = 0.15           # พลังงานต่อสตริงต่ำกว่าเฉลี่ยต่อสตริงของเครื่องเกิน 15%
+# เทียบ MPPT ได้เฉพาะวันที่มีข้อมูลช่วงแดดเต็ม (10–14 น. ผลิต > 20 kW) อย่างน้อยเท่านี้ — วันปกติมี 75–216 จุด
+# ต่ำกว่านี้คือ logger ส่งแต่ตอนเย็น/กลางคืน (#6 05/10 ได้ 17%–404% ไร้ความหมาย) วันถูกจำกัดกำลัง
+# หรือวันที่เครื่องหยุด → ไม่คำนวณ แสดงเป็นช่องเทา
+MPPT_MIN_MID_FRAMES = 10
 VDC_ALERT = 0.90            # Vdc กลางวันของ MPPT ต่ำกว่า 90% ของ MPPT อื่นในเครื่อง = สตริงอาจขาด
 OUTAGE_PAC_KW = 0.2         # เครื่องนี้ไม่จ่ายไฟ ...
 OUTAGE_SYSTEM_KW = 10.0     # ... ขณะที่ค่ากลางของเครื่องอื่นยังผลิตอยู่
@@ -536,7 +540,9 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     midc = PDC_COLS + VDC_COLS + IDC_COLS + list(PHASES.values()) + AC_V_COLS
     mid_med = m.groupby(["sn", "date"])[midc].median()
     mid_med.columns = [f"{c}_mid" for c in midc]
+    mid_med["n_mid"] = m.groupby(["sn", "date"]).size()
     daily = daily.merge(mid_med.reset_index(), on=["sn", "date"], how="left")
+    daily["n_mid"] = daily["n_mid"].fillna(0).astype("int32")
     # ความไม่สมดุลกระแส AC 3 เฟส ช่วงแดดเต็ม (ค่ากลางของทั้งวัน) — สูงผิดปกติ = เฟสใดเฟสหนึ่งมีปัญหา
     mi = m.assign(_imb=phase_imbalance(m)).groupby(["sn", "date"])["_imb"].median().rename("phase_imbal_pct")
     daily = daily.merge(mi.reset_index(), on=["sn", "date"], how="left")
@@ -638,8 +644,17 @@ def mppt_table(daily: pd.DataFrame) -> pd.DataFrame:
     if daily.empty:
         return pd.DataFrame()
     recs = []
-    for sn, g in daily.groupby("sn"):
-        no = int(g["inv_no"].iloc[0])
+    for sn, g_all in daily.groupby("sn"):
+        no = int(g_all["inv_no"].iloc[0])
+        # ใช้เฉพาะวันที่ข้อมูลช่วงแดดเต็มพอ (ดู MPPT_MIN_MID_FRAMES) — ไม่มีเลยในช่วงนี้ = ค่าว่างทุก MPPT (ช่องเทา)
+        ok = (g_all["n_mid"] >= MPPT_MIN_MID_FRAMES) if "n_mid" in g_all.columns \
+            else g_all[[f"vdc{i}_mid" for i in MPPT]].notna().any(axis=1)
+        g = g_all[ok]
+        if g.empty:
+            recs.extend({"inv_no": no, "sn": sn, "mppt": i, "e_kwh": np.nan, "idc_mid": np.nan, "n_str": np.nan,
+                         "per_str": np.nan, "ratio": np.nan, "vdc_mid": np.nan, "vdc_others": np.nan,
+                         "vdc_ratio": np.nan, "days": 0} for i in MPPT)
+            continue
         e = g[E_COLS].sum()
         idc = g[[f"idc{i}_mid" for i in MPPT]].median()
         vdc = g[[f"vdc{i}_mid" for i in MPPT]].median()

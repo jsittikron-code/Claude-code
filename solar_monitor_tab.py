@@ -204,6 +204,29 @@ def _ref_rules(refs: list[tuple[float, str, str]]) -> alt.Chart:
         tooltip=[alt.Tooltip("ป้าย:N", title="เส้นอ้างอิง")])
 
 
+NO_DATA_COLOR = "#334155"
+
+
+def _ratio_heatmap(df: pd.DataFrame, x, y, tip: list, font: int = 12) -> alt.LayerChart:
+    """ตาราง % เทียบค่าเฉลี่ยต่อสตริง — ช่องที่คำนวณไม่ได้ (ข้อมูลกลางวันไม่พอ) เป็นสีเทาพร้อม "—"
+    ไม่ปล่อยให้หายไปเฉย ๆ หรือโชว์ตัวเลขจากข้อมูลตอนเย็นที่ไม่มีความหมาย"""
+    df = df.copy()
+    df["เทียบเฉลี่ย"] = df["ratio"] * 100
+    df["ว่าง"] = df["เทียบเฉลี่ย"].isna()
+    df["ป้าย"] = df["เทียบเฉลี่ย"].map(lambda v: "—" if pd.isna(v) else f"{v:.0f}")
+    df["สถานะ"] = np.where(df["ว่าง"], "ข้อมูลกลางวันไม่พอ — ไม่คำนวณ", "คำนวณแล้ว")
+    tip = tip + [alt.Tooltip("เทียบเฉลี่ย:Q", title="เทียบเฉลี่ยต่อสตริง (%)", format=".0f"),
+                 alt.Tooltip("สถานะ:N", title="สถานะ")]
+    base = alt.Chart(df).encode(x=x, y=y, tooltip=tip)
+    gray = base.transform_filter(alt.datum["ว่าง"]).mark_rect(color=NO_DATA_COLOR)
+    heat = base.transform_filter(~alt.datum["ว่าง"]).mark_rect().encode(color=alt.Color(
+        "เทียบเฉลี่ย:Q", title="% ของเฉลี่ย", scale=alt.Scale(scheme="redyellowgreen", domain=[50, 120], clamp=True)))
+    txt = base.mark_text(fontWeight="bold", fontSize=font).encode(
+        text="ป้าย:N",
+        color=alt.condition("datum['ว่าง'] || datum['เทียบเฉลี่ย'] < 70", alt.value("#e2e8f0"), alt.value("#0f172a")))
+    return alt.layer(gray, heat, txt)
+
+
 def _with_refs(chart: alt.Chart, refs) -> alt.LayerChart:
     return alt.layer(chart, _ref_rules(refs)).resolve_axis(y="independent")
 
@@ -696,28 +719,22 @@ def render(kpi_card) -> None:
         with st.container(border=True, key="solar_mppt_heat"):
             st.subheader(f"ราย MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่อง (%) · {md_label}")
             hm = se.mppt_table(md).rename(columns={"mppt": "MPPT"})
-            hm["เทียบเฉลี่ย"] = hm["ratio"] * 100
             hm["เครื่อง"] = "#" + hm["inv_no"].astype(str)
-            base = alt.Chart(hm).encode(
-                x=alt.X("MPPT:O", title="MPPT"),
-                y=alt.Y("เครื่อง:N", sort=labels, title=None),
-                tooltip=["เครื่อง", "sn", "MPPT",
-                         alt.Tooltip("e_kwh:Q", title="พลังงาน DC (kWh)", format=",.0f"),
-                         alt.Tooltip("n_str:Q", title="สตริงที่อนุมานจากกระแส"),
-                         alt.Tooltip("idc_mid:Q", title="Idc กลางวัน (A)", format=".1f"),
-                         alt.Tooltip("per_str:Q", title="kWh ต่อสตริง", format=",.0f"),
-                         alt.Tooltip("เทียบเฉลี่ย:Q", title="เทียบเฉลี่ยต่อสตริง (%)", format=".0f"),
-                         alt.Tooltip("vdc_mid:Q", title="Vdc กลางวัน (V)", format=".0f")])
-            rect = base.mark_rect().encode(color=alt.Color(
-                "เทียบเฉลี่ย:Q", title="% ของเฉลี่ย",
-                scale=alt.Scale(scheme="redyellowgreen", domain=[50, 120], clamp=True)))
-            txt = base.mark_text(fontWeight="bold").encode(
-                text=alt.Text("เทียบเฉลี่ย:Q", format=".0f"),
-                color=alt.condition(alt.datum["เทียบเฉลี่ย"] < 70, alt.value("white"), alt.value("#0f172a")))
-            st.altair_chart((rect + txt).properties(height=380), width="stretch")
+            st.altair_chart(_ratio_heatmap(
+                hm, x=alt.X("MPPT:O", title="MPPT"), y=alt.Y("เครื่อง:N", sort=labels, title=None),
+                tip=["เครื่อง", "sn", "MPPT",
+                     alt.Tooltip("e_kwh:Q", title="พลังงาน DC (kWh)", format=",.0f"),
+                     alt.Tooltip("n_str:Q", title="สตริงที่อนุมานจากกระแส"),
+                     alt.Tooltip("idc_mid:Q", title="Idc กลางวัน (A)", format=".1f"),
+                     alt.Tooltip("per_str:Q", title="kWh ต่อสตริง", format=",.0f"),
+                     alt.Tooltip("vdc_mid:Q", title="Vdc กลางวัน (V)", format=".0f"),
+                     alt.Tooltip("days:Q", title="จำนวนวันที่ใช้คำนวณ")]).properties(height=380),
+                width="stretch")
             st.caption(f"100 = เท่าค่าเฉลี่ยต่อสตริงของเครื่องนั้น · ต่ำกว่า {100 * (1 - se.MPPT_ALERT):.0f} = ต้องตรวจ "
                        "(ฝุ่น เงาบัง สตริงขาด ฟิวส์ DC) · จำนวนสตริงต่อ MPPT (1 หรือ 2) อนุมานจากกระแสกลางวัน "
-                       "เพราะแบบติดตั้งต่อ MPPT 5/6 สตริงเดียว ถ้าเทียบ kWh ตรง ๆ จะฟ้องผิดทุกเครื่อง")
+                       "เพราะแบบติดตั้งต่อ MPPT 5/6 สตริงเดียว ถ้าเทียบ kWh ตรง ๆ จะฟ้องผิดทุกเครื่อง · "
+                       f"ช่องเทา — = ข้อมูลช่วง 10–14 น. ไม่ถึง {se.MPPT_MIN_MID_FRAMES} จุด (logger ส่งแต่ตอนเย็น/"
+                       "เครื่องหยุด/วันถูกจำกัดกำลัง) จึงไม่คำนวณ")
     with col_r2:
         with st.container(border=True, key="solar_string_health"):
             st.subheader(f"สุขภาพสตริง — Vdc กลางวัน (V) · {md_label}")
@@ -759,27 +776,18 @@ def render(kpi_card) -> None:
         # วัน × MPPT — พลังงานต่อสตริงเทียบค่าเฉลี่ยของเครื่องในวันนั้น (เห็นว่า MPPT ไหนเริ่มตกวันไหน)
         dm = se.mppt_daily(g)
         if not dm.empty:
-            dm["เทียบเฉลี่ย"] = dm["ratio"] * 100
             dm = dm[dm["date"] > dm["date"].max() - pd.Timedelta(days=60)]   # 60 วันล่าสุดพอ ไม่งั้นสูงเป็นเมตร
             dm["วันที่"] = dm["date"].dt.strftime("%d/%m/%y")                # ต้องมีปี ข้ามปีแล้ววันซ้ำกัน
             day_sort = list(dict.fromkeys(dm.sort_values("date", ascending=False)["วันที่"]))
-            base = alt.Chart(dm).encode(
-                x=alt.X("mppt:O", title="MPPT"),
-                y=alt.Y("วันที่:N", sort=day_sort, title=None),
-                tooltip=[alt.Tooltip("date:T", title="วันที่", format="%d/%m/%Y"), alt.Tooltip("mppt:O", title="MPPT"),
-                         alt.Tooltip("e_kwh:Q", title="พลังงาน DC (kWh)", format=",.1f"),
-                         alt.Tooltip("n_str:Q", title="จำนวนสตริง"),
-                         alt.Tooltip("เทียบเฉลี่ย:Q", title="เทียบเฉลี่ยต่อสตริง (%)", format=".0f"),
-                         alt.Tooltip("vdc_mid:Q", title="Vdc กลางวัน (V)", format=".0f")])
-            heat = base.mark_rect().encode(color=alt.Color(
-                "เทียบเฉลี่ย:Q", title="% ของเฉลี่ย",
-                scale=alt.Scale(scheme="redyellowgreen", domain=[50, 120], clamp=True)))
-            lbl = base.mark_text(fontSize=11).encode(
-                text=alt.Text("เทียบเฉลี่ย:Q", format=".0f"),
-                color=alt.condition(alt.datum["เทียบเฉลี่ย"] < 70, alt.value("white"), alt.value("#0f172a")))
-            st.altair_chart((heat + lbl).properties(
+            st.altair_chart(_ratio_heatmap(
+                dm, x=alt.X("mppt:O", title="MPPT"), y=alt.Y("วันที่:N", sort=day_sort, title=None),
+                tip=[alt.Tooltip("date:T", title="วันที่", format="%d/%m/%Y"), alt.Tooltip("mppt:O", title="MPPT"),
+                     alt.Tooltip("e_kwh:Q", title="พลังงาน DC (kWh)", format=",.1f"),
+                     alt.Tooltip("n_str:Q", title="จำนวนสตริง"),
+                     alt.Tooltip("vdc_mid:Q", title="Vdc กลางวัน (V)", format=".0f")], font=11).properties(
                 height=max(160, 22 * len(day_sort)),
-                title="รายวัน × MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่องในวันนั้น (%)"), width="stretch")
+                title="รายวัน × MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่องในวันนั้น (%) · ช่องเทา = ข้อมูลกลางวันไม่พอ"),
+                width="stretch")
 
         ml = g.melt(id_vars=["date"], value_vars=se.E_COLS, var_name="mppt", value_name="kWh")
         ml["MPPT"] = "MPPT " + ml["mppt"].str[1]
