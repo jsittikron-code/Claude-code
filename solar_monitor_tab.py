@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import traceback
+from datetime import time as dtime, timedelta
 
 import altair as alt
 import numpy as np
@@ -284,7 +285,224 @@ STATUS_COLORS = {"Grid connected": "#22c55e", "Checking": "#f59e0b", "Standby": 
 STRIP_ROWS = ["เครื่องรายงาน", "ระบบตรวจพบ"]
 
 
-def _intraday(raw: pd.DataFrame, day: pd.Timestamp, outage_slots: pd.Series | None = None) -> None:
+# ---------------------------------------------------------------------------
+# ผังพลังงานเคลื่อนไหล: แผง (MPPT 1–6) → อินเวอร์เตอร์ → AC 3 เฟส → โรงงาน · เล่นย้อนทั้งวันได้
+# ---------------------------------------------------------------------------
+FLOW_STEP_MIN = 10           # เล่นทีละ 10 นาที
+FLOW_TICK = "1.2s"           # ขยับทุก 1.2 วินาที (14 ชม. ≈ 100 วินาที)
+FLOW_W, FLOW_H = 1200, 400
+MPPT_HEX = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]   # = scheme category10 ของกราฟ
+FLOW_IDLE = "#475569"
+FLOW_MPPT_KW = 20.0          # กำลัง DC ต่อ MPPT ที่ถือว่า "เต็ม" สำหรับความหนาเส้น (จริงสูงสุด ~17 kW)
+
+
+def _flow_dur(frac: float) -> str:
+    """ความเร็วอนุภาคตามกำลัง: แรงมาก = วิ่งเร็ว (0.45 วิ/รอบ) · เบา = ช้า (2.6 วิ/รอบ)"""
+    return f"{max(0.45, 2.6 - 2.15 * min(max(frac, 0.0), 1.0)):.2f}s"
+
+
+def _flow_svg(row, t: pd.Timestamp, day_pac: pd.DataFrame, inv_label: str, n_out_now: bool) -> str:
+    """ภาพ SVG ณ เวลา t — row = แถวข้อมูลล่าสุดก่อน t (ภายใน 3 นาที) หรือ None ถ้า logger ไม่ส่ง"""
+    W, H = FLOW_W, FLOW_H
+    txt = "#e2e8f0"
+    mute = "#94a3b8"
+    have = row is not None
+    o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="100%" '
+         f'style="display:block;max-width:{W}px;font-family:inherit">',
+         "<style>"
+         "@keyframes sflow{to{stroke-dashoffset:-36}}"
+         ".sf{stroke-dasharray:3 15;stroke-linecap:round;animation:sflow linear infinite}"
+         "@keyframes sglow{0%,100%{opacity:.55}50%{opacity:1}}"
+         ".sg{animation:sglow 1.6s ease-in-out infinite}"
+         "</style>"]
+    # ---- หัว: เวลา + สถานะ + ตัวเลขหลัก ----
+    pac = float(row["pac_kw"]) if have and pd.notna(row["pac_kw"]) else 0.0
+    pdc = float(row["pdc_kw"]) if have and pd.notna(row["pdc_kw"]) else 0.0
+    status = str(row["status"]) if have else "ไม่มีข้อมูล"
+    if have and n_out_now:
+        st_txt, st_col = "หยุดจ่ายไฟ (เครื่องอื่นยังผลิต)", STATUS_COLORS[OUTAGE_LABEL]
+    elif have:
+        st_txt, st_col = status, STATUS_COLORS.get(status, STATUS_COLORS["Fault"])
+    else:
+        st_txt, st_col = "logger ไม่ส่งข้อมูล ณ เวลานี้", FLOW_IDLE
+    o.append(f'<text x="20" y="40" font-size="34" font-weight="800" fill="{txt}">{t:%H:%M}</text>'
+             f'<text x="128" y="40" font-size="15" fill="{mute}">{t:%d/%m/%Y} · {inv_label}</text>'
+             f'<circle cx="136" cy="58" r="6" fill="{st_col}" class="sg"/>'
+             f'<text x="148" y="63" font-size="14" font-weight="700" fill="{st_col}">{st_txt}</text>')
+    eff = pac / pdc * 100 if pdc > 1 else None
+    eday = float(row["eday_kwh"]) if have and pd.notna(row.get("eday_kwh")) else None
+    kpis = [("DC ขาเข้า", f"{pdc:.1f} kW", COLOR_SOLAR), ("AC ขาออก", f"{pac:.1f} kW", COLOR_GRID2),
+            ("ประสิทธิภาพ", f"{eff:.1f} %" if eff else "—", "#22c55e"),
+            ("ผลิตสะสมวันนี้", f"{eday:,.1f} kWh" if eday is not None else "—", "#a78bfa")]
+    for k, (lbl, val, col) in enumerate(kpis):
+        x = 560 + k * 160
+        o.append(f'<text x="{x}" y="26" font-size="12" fill="{mute}">{lbl}</text>'
+                 f'<text x="{x}" y="52" font-size="22" font-weight="800" fill="{col}">{val}</text>')
+
+    # ---- MPPT 1–6 (ซ้าย) → อินเวอร์เตอร์ (กลาง) ----
+    ix0, ix1, iy0, iy1 = 520, 700, 120, 260
+    for k, i in enumerate(se.MPPT):
+        y = 84 + k * 35
+        v = row.get(f"vdc{i}") if have else None
+        a = row.get(f"idc{i}") if have else None
+        p = (row.get(f"pdc{i}") or 0) / 1000.0 if have else 0.0
+        on = have and p > 0.05
+        col = MPPT_HEX[k] if on else FLOW_IDLE
+        o.append(f'<rect x="20" y="{y}" width="230" height="30" rx="6" fill="{col}" fill-opacity=".14" '
+                 f'stroke="{col}" stroke-opacity=".7"/>'
+                 f'<text x="32" y="{y + 20}" font-size="13" font-weight="700" fill="{col}">MPPT {i}</text>'
+                 f'<text x="100" y="{y + 20}" font-size="12" fill="{txt}">'
+                 + (f"{v:.0f} V · {a:.1f} A · {p:.1f} kW" if have and pd.notna(v) and pd.notna(a) else "—")
+                 + "</text>")
+        ty = iy0 + 24 + k * 18
+        path = f"M250,{y + 15} C390,{y + 15} 390,{ty} {ix0},{ty}"
+        frac = p / FLOW_MPPT_KW
+        o.append(f'<path d="{path}" fill="none" stroke="{col}" stroke-opacity=".22" stroke-width="{2 + 9 * frac:.1f}"/>')
+        if on:
+            o.append(f'<path d="{path}" fill="none" stroke="{col}" stroke-width="{2.5 + 5 * frac:.1f}" class="sf" '
+                     f'style="animation-duration:{_flow_dur(frac)}"/>')
+    o.append(f'<rect x="{ix0}" y="{iy0}" width="{ix1 - ix0}" height="{iy1 - iy0}" rx="10" fill="#0f172a" '
+             f'stroke="{st_col}" stroke-width="2"/>'
+             f'<text x="{(ix0 + ix1) / 2}" y="{iy0 + 32}" font-size="15" font-weight="800" fill="{txt}" '
+             f'text-anchor="middle">อินเวอร์เตอร์</text>'
+             f'<text x="{(ix0 + ix1) / 2}" y="{iy0 + 54}" font-size="12" fill="{mute}" text-anchor="middle">'
+             f'{inv_label}</text>'
+             f'<text x="{(ix0 + ix1) / 2}" y="{iy0 + 86}" font-size="24" font-weight="800" fill="{COLOR_GRID2}" '
+             f'text-anchor="middle">{pac:.1f} kW</text>'
+             f'<text x="{(ix0 + ix1) / 2}" y="{iy0 + 110}" font-size="12" fill="{mute}" text-anchor="middle">'
+             + (f"Heatsink {row['t_heatsink']:.0f} °C · {row['hz']:.2f} Hz"
+                if have and pd.notna(row.get("t_heatsink")) and pd.notna(row.get("hz")) else "")
+             + "</text>")
+
+    # ---- AC 3 เฟส (ขวา) → โรงงาน ----
+    fx0, fx1 = 980, 1180
+    for k, (ph, col_name) in enumerate(se.PHASES.items()):
+        a = row.get(col_name) if have else None
+        vv = row.get(se.AC_V_COLS[k]) if have else None
+        frac = (a or 0) / se.AC_IMAX_A if have and pd.notna(a) else 0.0
+        on = have and pac > 0.2
+        col = PHASE_COLORS[ph] if on else FLOW_IDLE
+        y = iy0 + 38 + k * 32
+        path = f"M{ix1},{y} L{fx0},{y}"
+        o.append(f'<path d="{path}" fill="none" stroke="{col}" stroke-opacity=".22" stroke-width="{2 + 9 * frac:.1f}"/>')
+        if on:
+            o.append(f'<path d="{path}" fill="none" stroke="{col}" stroke-width="{2.5 + 5 * frac:.1f}" class="sf" '
+                     f'style="animation-duration:{_flow_dur(frac)}"/>')
+        o.append(f'<text x="{ix1 + 20}" y="{y - 8}" font-size="12" font-weight="700" fill="{col}">เฟส {ph} · '
+                 + (f"{a:.1f} A · {vv:.0f} V" if have and pd.notna(a) and pd.notna(vv) else "—") + "</text>")
+    o.append(f'<rect x="{fx0}" y="{iy0}" width="{fx1 - fx0}" height="{iy1 - iy0}" rx="10" fill="#0f172a" '
+             f'stroke="{COLOR_GRID2}" stroke-width="2"/>'
+             f'<text x="{(fx0 + fx1) / 2}" y="{iy0 + 36}" font-size="15" font-weight="800" fill="{txt}" '
+             f'text-anchor="middle">โรงงาน 33/5</text>'
+             f'<text x="{(fx0 + fx1) / 2}" y="{iy0 + 58}" font-size="12" fill="{mute}" text-anchor="middle">'
+             f'Solar MDB → MDB 22 kV</text>'
+             f'<text x="{(fx0 + fx1) / 2}" y="{iy0 + 96}" font-size="24" font-weight="800" fill="{COLOR_GRID2}" '
+             f'text-anchor="middle">{pac:.1f} kW</text>')
+
+    # ---- แถบเวลาทั้งวัน: กำลัง AC ราย 15 นาที + ตำแหน่งเวลาที่กำลังดู ----
+    bx0, bx1, by0, by1 = 20, W - 20, 326, 382
+    d0 = t.normalize() + pd.Timedelta(hours=5, minutes=30)
+    span = 14 * 3600.0
+
+    def px(ts):
+        return bx0 + (bx1 - bx0) * min(max((ts - d0).total_seconds() / span, 0), 1)
+    o.append(f'<rect x="{bx0}" y="{by0}" width="{bx1 - bx0}" height="{by1 - by0}" fill="#0f172a" rx="6"/>')
+    if not day_pac.empty:
+        pts = " ".join(f"{px(r.slot):.1f},{by1 - (by1 - by0 - 6) * min(r.kw / se.RATED_KW, 1):.1f}"
+                       for r in day_pac.itertuples())
+        o.append(f'<polyline points="{bx0},{by1} {pts} {bx1},{by1}" fill="{COLOR_SOLAR}" fill-opacity=".25" '
+                 f'stroke="{COLOR_SOLAR}" stroke-width="1.5"/>')
+    for hh in range(6, 20, 2):
+        xx = px(t.normalize() + pd.Timedelta(hours=hh))
+        o.append(f'<text x="{xx:.1f}" y="{by1 + 14}" font-size="10" fill="{mute}" text-anchor="middle">{hh:02d}:00</text>')
+    cx = px(t)
+    o.append(f'<line x1="{cx:.1f}" y1="{by0 - 6}" x2="{cx:.1f}" y2="{by1}" stroke="#f8fafc" stroke-width="2"/>'
+             f'<circle cx="{cx:.1f}" cy="{by0 - 6}" r="4" fill="#f8fafc"/>')
+    o.append("</svg>")
+    return "".join(o)
+
+
+def _flow_board(raw: pd.DataFrame, day: pd.Timestamp, inv_label: str, outage_slots) -> None:
+    """ผังพลังงานเคลื่อนไหลของเครื่องที่เลือก — ลากเวลา หรือกด ▶ เล่นทั้งวัน (ทีละ 10 นาที)"""
+    lo, hi = 5 * 60 + 30, 19 * 60 + 30
+    ctx = f"{inv_label}|{day:%Y%m%d}"
+    if st.session_state.get("solar_flow_ctx") != ctx:      # เปลี่ยนเครื่อง/วัน → เริ่มที่เวลาที่ผลิตสูงสุด
+        st.session_state["solar_flow_ctx"] = ctx
+        st.session_state["solar_flow_play"] = False
+        pk = raw.loc[raw["pac_kw"].idxmax(), "ts"] if raw["pac_kw"].notna().any() else day + pd.Timedelta(hours=12)
+        st.session_state["solar_flow_cursor"] = int(pk.hour * 60 + pk.minute) // FLOW_STEP_MIN * FLOW_STEP_MIN
+    playing = bool(st.session_state.get("solar_flow_play"))
+    out_set = set(pd.to_datetime(pd.Series(list(outage_slots))) if outage_slots is not None else [])
+    day_pac = (raw.assign(slot=raw["ts"].dt.floor("15min")).groupby("slot", as_index=False)["pac_kw"].mean()
+               .rename(columns={"pac_kw": "kw"}))
+
+    def _play(on: bool):
+        st.session_state["solar_flow_play"] = on
+
+    def _jump(minute: int):
+        st.session_state["solar_flow_play"] = False
+        st.session_state["solar_flow_cursor"] = minute
+        st.session_state["solar_flow_nonce"] = st.session_state.get("solar_flow_nonce", 0) + 1
+
+    def _slid(key: str):
+        # กรองค่าเก่าจากสไลเดอร์ที่ถูกสร้างใหม่ระหว่างเล่น (ปัญหาเดียวกับผังไลน์ผลิต 8503)
+        if key != st.session_state.get("solar_flow_sl_key"):
+            return
+        v = st.session_state.get(key)
+        if v is None:
+            return
+        m = v.hour * 60 + v.minute
+        if m == int(key.rsplit("_", 1)[1]):
+            return
+        st.session_state.update(solar_flow_cursor=m, solar_flow_play=False,
+                                solar_flow_nonce=st.session_state.get("solar_flow_nonce", 0) + 1)
+
+    @st.fragment(run_every=FLOW_TICK if playing else None)
+    def board(playing_at_def=playing):
+        # run_every ถูกตรึงตอนประกาศ — สถานะเล่น/หยุดเปลี่ยนต้อง rerun ทั้งหน้าให้ประกาศใหม่
+        if bool(st.session_state.get("solar_flow_play")) != playing_at_def:
+            st.rerun()
+        cur = max(lo, min(hi, int(st.session_state.get("solar_flow_cursor", 12 * 60))))
+        if playing_at_def:
+            nxt = cur + FLOW_STEP_MIN
+            if nxt > hi:                                  # ถึงปลายวัน → หยุดเอง
+                st.session_state["solar_flow_play"] = False
+                st.session_state["solar_flow_cursor"] = hi
+                st.rerun()
+            cur = nxt
+        st.session_state["solar_flow_cursor"] = cur
+        sl_key = f"solar_flow_sl_{st.session_state.get('solar_flow_nonce', 0)}_{cur}"
+        st.session_state["solar_flow_sl_key"] = sl_key
+        c_sl, c_b1, c_b2 = st.columns([6, 1, 1], vertical_alignment="bottom")
+        with c_sl:
+            st.slider("เวลา", min_value=dtime(lo // 60, lo % 60), max_value=dtime(hi // 60, hi % 60),
+                      value=dtime(cur // 60, cur % 60), step=timedelta(minutes=FLOW_STEP_MIN), format="HH:mm",
+                      key=sl_key, on_change=_slid, args=(sl_key,), label_visibility="collapsed")
+        with c_b1:
+            if playing_at_def:
+                st.button(":material/pause: หยุด", key="solar_flow_pause", width="stretch", on_click=_play,
+                          args=(False,))
+            else:
+                st.button(":material/play_arrow: เล่นทั้งวัน", key="solar_flow_go", width="stretch",
+                          on_click=_play, args=(True,), type="primary")
+        with c_b2:
+            st.button(":material/skip_previous: 06:00", key="solar_flow_home", width="stretch", on_click=_jump,
+                      args=(6 * 60,))
+        t = day + pd.Timedelta(minutes=cur)
+        prev = raw[(raw["ts"] <= t) & (raw["ts"] > t - pd.Timedelta(minutes=3))]
+        row = prev.iloc[-1] if not prev.empty else None
+        n_out_now = t.floor("15min") in out_set
+        svg = _flow_svg(row, t, day_pac, inv_label, n_out_now)
+        # ต้องใช้ st.markdown ห่อ <div> และทำเป็นบรรทัดเดียว (st.html ไม่วาด SVG — บทเรียนจากผังไลน์ผลิต 8503)
+        st.markdown("<div>\n" + svg.replace("\r", " ").replace("\n", " ") + "\n</div>", unsafe_allow_html=True)
+        st.caption("เส้นวิ่ง = ทิศทางพลังงาน · ยิ่งหนาและวิ่งเร็ว = กำลังมาก · เส้นเทานิ่ง = ไม่มีกำลังไหล · "
+                   "แถบล่าง = กำลัง AC ทั้งวัน เส้นขาวคือเวลาที่กำลังดู · ข้อมูลจริงจาก EVE ทุก ~65 วินาที")
+
+    board()
+
+
+def _intraday(raw: pd.DataFrame, day: pd.Timestamp, outage_slots: pd.Series | None = None,
+              inv_label: str = "") -> None:
     """รายละเอียดทั้งวันของเครื่องเดียว: แถบสถานะ · KPI · กระแส DC ต่อ MPPT · กระแส AC ต่อเฟส · กำลัง · แรงดัน DC
 
     outage_slots = ช่วง 15 นาทีที่ solar_etl ตรวจพบว่าเครื่องนี้หยุดจ่ายไฟขณะเครื่องอื่นยังผลิต
@@ -347,6 +565,10 @@ def _intraday(raw: pd.DataFrame, day: pd.Timestamp, outage_slots: pd.Series | No
                   "ขณะเครื่องอื่นยังผลิต" if n_out else "ไม่พบ", delta_color="inverse" if n_out else "off",
                   border=True)
 
+    # ---- ผังพลังงานเคลื่อนไหล ----
+    st.markdown("**พลังงานเคลื่อนไหล** — แผง → อินเวอร์เตอร์ → โรงงาน ณ เวลาที่เลือก")
+    _flow_board(raw, day, inv_label, outage_slots)
+
     # ---- แถบสถานะตลอดวัน: แถวบน = ที่เครื่องรายงานเอง · แถวล่าง = ที่ระบบตรวจพบจากการเทียบเครื่องอื่น ----
     rep = raw[["ts", "ts_end", "สถานะ", "status", "grid_status", "pac_kw"]].assign(แถว=STRIP_ROWS[0])
     parts = [rep]
@@ -355,19 +577,23 @@ def _intraday(raw: pd.DataFrame, day: pd.Timestamp, outage_slots: pd.Series | No
         parts.append(pd.DataFrame({"ts": s, "ts_end": s + pd.Timedelta(minutes=15), "สถานะ": OUTAGE_LABEL,
                                    "status": "ไม่จ่ายไฟ", "แถว": STRIP_ROWS[1]}))
     strip_df = pd.concat(parts, ignore_index=True)
-    # ชื่อกราฟเขียนนอกกราฟ — ใส่ใน title แล้ว Streamlit กินความสูงไปจนแถบเหลือเส้นบาง ๆ
-    st.markdown("**สถานะตลอดวัน** — แถวบน = ที่เครื่องรายงานเอง · แถวล่าง = ที่ระบบตรวจพบจากการเทียบเครื่องอื่น "
-                "· ช่องว่าง = logger ไม่ส่งข้อมูล")
+    # ชื่อและคำอธิบายสีเขียนนอกกราฟ — ใส่ title หรือ legend ไว้ในกราฟ Streamlit จะหักความสูงไปให้
+    # จนแถบเหลือเส้นบาง ๆ และป้ายแถวซ้อนกัน (เจอทั้งสองแบบบนหน้าจริง 6 ต.ค. 69)
+    chips = " ".join(f'<span style="display:inline-block;width:11px;height:11px;border-radius:2px;'
+                     f'background:{c};margin:0 4px 0 10px;vertical-align:-1px"></span>{k}'
+                     for k, c in STATUS_COLORS.items())
+    st.markdown(f"**สถานะตลอดวัน** — แถวบน = ที่เครื่องรายงานเอง · แถวล่าง = ที่ระบบตรวจพบจากการเทียบเครื่องอื่น "
+                f"· ช่องว่าง = logger ไม่ส่งข้อมูล<br><small>{chips}</small>", unsafe_allow_html=True)
     strip = alt.Chart(strip_df).mark_rect(clip=True).encode(
         x=x, x2="ts_end:T",
-        y=alt.Y("แถว:N", sort=STRIP_ROWS, title=None, scale=alt.Scale(domain=STRIP_ROWS, paddingInner=0.25),
+        y=alt.Y("แถว:N", sort=STRIP_ROWS, title=None, scale=alt.Scale(domain=STRIP_ROWS, paddingInner=0.2),
                 axis=alt.Axis(labelLimit=0, labelFontSize=12)),
         color=alt.Color("สถานะ:N", scale=alt.Scale(domain=list(STATUS_COLORS), range=list(STATUS_COLORS.values())),
-                        legend=alt.Legend(orient="bottom", title=None, columns=5, symbolType="square")),
+                        legend=None),
         tooltip=[alt.Tooltip("ts:T", title="เวลา", format="%H:%M:%S"), alt.Tooltip("แถว:N", title="แหล่ง"),
                  alt.Tooltip("status:N", title="สถานะ"), alt.Tooltip("grid_status:N", title="Grid"),
                  alt.Tooltip("pac_kw:Q", title="Pac (kW)", format=".1f")])
-    st.altair_chart(strip.properties(height=110), width="stretch")
+    st.altair_chart(strip.properties(height=96), width="stretch")
 
     def melt(cols: dict, name: str, value: str) -> pd.DataFrame:
         return pd.concat([raw[["ts", "seg"]].assign(**{name: k, value: raw[c]}) for k, c in cols.items()],
@@ -377,7 +603,9 @@ def _intraday(raw: pd.DataFrame, day: pd.Timestamp, outage_slots: pd.Series | No
     H = 300                                   # ทุกกราฟสูงเท่ากัน · หน่วยอยู่ในชื่อกราฟ (แกน y ไม่ใส่ชื่อ ไม่ให้ทับตัวเลข)
 
     def panel(chart, refs, title):
-        st.altair_chart(_with_refs(chart, refs).properties(height=H, title=title), width="stretch")
+        # ชื่อกราฟเขียนนอกกราฟ — ใน title ของ Vega ชื่อถูกตัดซ้ายเมื่อแกนขวามีป้ายยาว (① ④ บนหน้าจริง)
+        st.markdown(f"**{title}**")
+        st.altair_chart(_with_refs(chart, refs).properties(height=H), width="stretch")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -824,7 +1052,8 @@ def render(kpi_card) -> None:
                 index=days_g.index(np.datetime64(end)) if single and np.datetime64(end) in days_g else 0,
                 format_func=lambda x: pd.Timestamp(x).strftime("%d/%m/%Y (%a)"))
             po = prof_all[(prof_all["sn"] == sel) & (prof_all["date"] == iday) & prof_all["outage"]]["slot"]
-            _intraday(_readings(sig, iday, sel), pd.Timestamp(iday), po)
+            no = int(opts.loc[opts["sn"] == sel, "inv_no"].iloc[0])
+            _intraday(_readings(sig, iday, sel), pd.Timestamp(iday), po, inv_label=f"#{no} · SN {sel}")
 
         det = g[["date", "ac_kwh", "dc_kwh", "eff_pct"] + se.E_COLS + ["pac_max", "pdc_max",
                  "coverage_pct", "outage_min", "curtail_min", "n_fault", "t_heatsink_max"]].copy()
