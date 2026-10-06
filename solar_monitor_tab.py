@@ -179,9 +179,13 @@ def _last_update_panel() -> None:
 # กราฟกระแสไฟฟ้า DC ขาเข้า / AC ขาออก (ใช้ในส่วนเจาะรายเครื่อง)
 # ---------------------------------------------------------------------------
 PHASE_COLORS = {"R": "#ef4444", "S": "#facc15", "T": "#3b82f6"}      # แดง/เหลือง/น้ำเงิน อ่านง่ายบนพื้นมืด
-MPPT_COLOR = alt.Color("MPPT:N", scale=alt.Scale(scheme="category10"), legend=alt.Legend(orient="bottom"))
+# ตำนาน 6 MPPT แถวเดียวยาวเกินกราฟครึ่งจอจนโดนตัด ("MPPT 5 ■ M") — แบ่งเป็น 2 แถว แถวละ 3
+MPPT_COLOR = alt.Color("MPPT:N", scale=alt.Scale(scheme="category10"),
+                       legend=alt.Legend(orient="bottom", title=None, columns=3, symbolType="stroke",
+                                         symbolStrokeWidth=3, labelLimit=0))
 PHASE_COLOR = alt.Color("เฟส:N", scale=alt.Scale(domain=list(PHASE_COLORS), range=list(PHASE_COLORS.values())),
-                        legend=alt.Legend(orient="bottom"))
+                        legend=alt.Legend(orient="bottom", title="เฟส", columns=3, symbolType="stroke",
+                                          symbolStrokeWidth=3))
 REF_MUTED = "#94a3b8"
 
 
@@ -216,7 +220,7 @@ def _current_trend(g: pd.DataFrame) -> None:
             g[["date"]].assign(MPPT=f"MPPT {i}", ค่ากลาง=g[f"idc{i}_mid"], สูงสุด=g[f"idc{i}_max"])
             for i in se.MPPT], ignore_index=True)
         line = alt.Chart(dc.dropna(subset=["ค่ากลาง"])).mark_line(point=True, strokeWidth=2).encode(
-            x=x, y=alt.Y("ค่ากลาง:Q", title="กระแส DC (A)", scale=alt.Scale(domain=[0, se.STRING_IMP_A * 2.3])),
+            x=x, y=alt.Y("ค่ากลาง:Q", title=None, scale=alt.Scale(domain=[0, se.STRING_IMP_A * 2.3])),
             color=MPPT_COLOR,
             tooltip=[alt.Tooltip("date:T", title="วันที่", format="%d/%m/%Y"), "MPPT",
                      alt.Tooltip("ค่ากลาง:Q", title="ค่ากลาง 10–14 น. (A)", format=".1f"),
@@ -224,7 +228,7 @@ def _current_trend(g: pd.DataFrame) -> None:
         refs = [(round(se.STRING_IMP_A * 2, 2), f"2 สตริง {se.STRING_IMP_A * 2:.1f} A", REF_MUTED),
                 (se.STRING_IMP_A, f"1 สตริง {se.STRING_IMP_A:.1f} A", REF_MUTED)]
         st.altair_chart(_with_refs(line, refs).properties(
-            height=290, title="กระแส DC ขาเข้า ต่อ MPPT (ค่ากลางช่วงแดดเต็ม)"), width="stretch")
+            height=300, title="กระแส DC ขาเข้า ต่อ MPPT (A) · รายวัน ค่ากลาง 10–14 น."), width="stretch")
         st.caption("เส้นประ = กระแสที่แดดเต็ม (STC) ของ MPPT ที่ต่อ 1 / 2 สตริง · "
                    "MPPT ที่ต่อ 2 สตริงแต่กระแสตกมาใกล้เส้น 1 สตริง = สตริงขนานหลุดไป 1 ชุด")
     with c2:
@@ -234,7 +238,7 @@ def _current_trend(g: pd.DataFrame) -> None:
             ignore_index=True)
         ac = ac.merge(g[["date", "phase_imbal_pct"]], on="date", how="left")
         line = alt.Chart(ac.dropna(subset=["A"])).mark_line(point=True, strokeWidth=2).encode(
-            x=x, y=alt.Y("A:Q", title="กระแส AC (A)", scale=alt.Scale(domain=[0, se.AC_IMAX_A * 1.08])),
+            x=x, y=alt.Y("A:Q", title=None, scale=alt.Scale(domain=[0, se.AC_IMAX_A * 1.08])),
             color=PHASE_COLOR,
             strokeDash=alt.StrokeDash("ชนิด:N", scale=alt.Scale(
                 domain=["ค่ากลาง 10–14 น.", "สูงสุดของวัน"], range=[[1, 0], [4, 3]]),
@@ -244,7 +248,7 @@ def _current_trend(g: pd.DataFrame) -> None:
                      alt.Tooltip("phase_imbal_pct:Q", title="เฟสไม่สมดุล (%)", format=".1f")])
         refs = [(se.AC_IMAX_A, f"พิกัด {se.AC_IMAX_A:.1f} A", COLOR_ALERT)]
         st.altair_chart(_with_refs(line, refs).properties(
-            height=290, title="กระแส AC ขาออก ต่อเฟส R / S / T"), width="stretch")
+            height=300, title="กระแส AC ขาออก ต่อเฟส R / S / T (A) · รายวัน"), width="stretch")
         imb = g["phase_imbal_pct"].dropna()
         st.caption("เส้นทึบ = ค่ากลางช่วงแดดเต็ม · เส้นประ = สูงสุดของวัน · เส้นแดง = พิกัดกระแสอินเวอร์เตอร์"
                    + (f" · เฟสไม่สมดุล ค่ากลาง {imb.median():.1f}% (สูงสุด {imb.max():.1f}% วันที่ "
@@ -266,14 +270,33 @@ def _intraday(raw: pd.DataFrame, day: pd.Timestamp, outage_slots: pd.Series | No
     if raw.empty:
         st.info("ไม่มีข้อมูลของเครื่องนี้ในวันที่เลือก")
         return
+    # แสดงเฉพาะช่วง 05:30–19:30 — บาง logger (#6) ส่งแถวตอนกลางคืนมาด้วย (Pac = 0) ถ้าไม่ตัด
+    # เส้นจะลากออกนอกแกนซ้าย และกราฟบีบจนช่วงกลางวันเหลือนิดเดียว
+    t0, t1 = day + pd.Timedelta(hours=5, minutes=30), day + pd.Timedelta(hours=19, minutes=30)
+    n_night = int((~raw["ts"].between(t0, t1)).sum())
+    raw = raw[raw["ts"].between(t0, t1)].copy()
+    if raw.empty:
+        st.warning(f"วันนี้เครื่องนี้ส่งข้อมูลมาเฉพาะช่วงกลางคืน ({n_night} จุด) ไม่มีข้อมูลช่วงผลิตเลย — "
+                   "data logger ของเครื่องนี้มีปัญหา ให้ตรวจสายสัญญาณ/ตัว Collector")
+        return
+    # logger ส่งข้อมูลน้อย (ปกติ ~650 จุด/วัน) — แต่ละจุดห่างกันจนเป็นเส้นไม่ได้ ต้องแสดงเป็นจุด
+    sparse = len(raw) < 300
+    if sparse:
+        st.warning(f"วันนี้เครื่องนี้ส่งข้อมูลแค่ {len(raw)} จุดในช่วงกลางวัน (ปกติ ~650) — กราฟด้านล่างเป็นจุด "
+                   "เท่าที่มี ไม่ใช่ภาพเต็มวัน · ยอดผลิตรายวันยังถูกต้องเพราะใช้มิเตอร์สะสมของเครื่อง")
     # ช่วงที่ logger ไม่ส่งข้อมูล (ห่าง > 3 นาที) — ตัดเส้นให้ขาด ไม่ลากเส้นตรงข้ามช่องว่างจนดูเหมือนมีข้อมูล
     raw["seg"] = (raw["ts"].diff() > pd.Timedelta(minutes=3)).cumsum()
     raw["สถานะ"] = raw["status"].where(raw["status"].isin(["Grid connected", "Checking", "Standby"]), "Fault")
     raw["ts_end"] = raw["ts"].shift(-1).fillna(raw["ts"] + pd.Timedelta(minutes=1))
     raw["ts_end"] = raw[["ts_end"]].assign(cap=raw["ts"] + pd.Timedelta(minutes=3)).min(axis=1)
     raw["imb"] = se.phase_imbalance(raw)
-    x = alt.X("ts:T", title=None, axis=alt.Axis(format="%H:%M", labelAngle=0),
-              scale=alt.Scale(domain=[f"{day:%Y-%m-%d}T05:30:00", f"{day:%Y-%m-%d}T19:00:00"]))
+    x = alt.X("ts:T", title=None, axis=alt.Axis(format="%H:%M", labelAngle=0, tickCount=8),
+              scale=alt.Scale(domain=[t0.isoformat(), t1.isoformat()]))
+
+    def line(d: pd.DataFrame, width: float = 1.6) -> alt.Chart:
+        """เส้นตามเวลา ตัดส่วนเกินกรอบ · ข้อมูลน้อยให้มีจุดด้วย ไม่งั้นช่วงที่มีจุดเดียวจะมองไม่เห็นเลย"""
+        return alt.Chart(d).mark_line(strokeWidth=width, clip=True,
+                                      point=alt.OverlayMarkDef(size=18, filled=True) if sparse else False)
 
     # ---- KPI ของวัน ----
     prod = raw[raw["pdc_kw"].fillna(0) > 5]
@@ -309,64 +332,72 @@ def _intraday(raw: pd.DataFrame, day: pd.Timestamp, outage_slots: pd.Series | No
         parts.append(pd.DataFrame({"ts": s, "ts_end": s + pd.Timedelta(minutes=15), "สถานะ": OUTAGE_LABEL,
                                    "status": "ไม่จ่ายไฟ", "แถว": STRIP_ROWS[1]}))
     strip_df = pd.concat(parts, ignore_index=True)
-    strip = alt.Chart(strip_df).mark_rect().encode(
-        x=x, x2="ts_end:T", y=alt.Y("แถว:N", sort=STRIP_ROWS, title=None, scale=alt.Scale(domain=STRIP_ROWS)),
+    # ชื่อกราฟเขียนนอกกราฟ — ใส่ใน title แล้ว Streamlit กินความสูงไปจนแถบเหลือเส้นบาง ๆ
+    st.markdown("**สถานะตลอดวัน** — แถวบน = ที่เครื่องรายงานเอง · แถวล่าง = ที่ระบบตรวจพบจากการเทียบเครื่องอื่น "
+                "· ช่องว่าง = logger ไม่ส่งข้อมูล")
+    strip = alt.Chart(strip_df).mark_rect(clip=True).encode(
+        x=x, x2="ts_end:T",
+        y=alt.Y("แถว:N", sort=STRIP_ROWS, title=None, scale=alt.Scale(domain=STRIP_ROWS, paddingInner=0.25),
+                axis=alt.Axis(labelLimit=0, labelFontSize=12)),
         color=alt.Color("สถานะ:N", scale=alt.Scale(domain=list(STATUS_COLORS), range=list(STATUS_COLORS.values())),
-                        legend=alt.Legend(orient="right", title="สถานะ")),
+                        legend=alt.Legend(orient="bottom", title=None, columns=5, symbolType="square")),
         tooltip=[alt.Tooltip("ts:T", title="เวลา", format="%H:%M:%S"), alt.Tooltip("แถว:N", title="แหล่ง"),
                  alt.Tooltip("status:N", title="สถานะ"), alt.Tooltip("grid_status:N", title="Grid"),
                  alt.Tooltip("pac_kw:Q", title="Pac (kW)", format=".1f")])
-    st.altair_chart(strip.properties(
-        height=80, title="สถานะตลอดวัน (ช่องว่าง = logger ไม่ส่งข้อมูล · ม่วง = ระบบตรวจพบว่าหยุดจ่ายไฟ)"),
-        width="stretch")
+    st.altair_chart(strip.properties(height=110), width="stretch")
 
     def melt(cols: dict, name: str, value: str) -> pd.DataFrame:
         return pd.concat([raw[["ts", "seg"]].assign(**{name: k, value: raw[c]}) for k, c in cols.items()],
                          ignore_index=True).dropna(subset=[value])
 
+    tip_t = alt.Tooltip("ts:T", title="เวลา", format="%H:%M:%S")
+    H = 300                                   # ทุกกราฟสูงเท่ากัน · หน่วยอยู่ในชื่อกราฟ (แกน y ไม่ใส่ชื่อ ไม่ให้ทับตัวเลข)
+
+    def panel(chart, refs, title):
+        st.altair_chart(_with_refs(chart, refs).properties(height=H, title=title), width="stretch")
+
     c1, c2 = st.columns(2)
     with c1:
         d = melt({f"MPPT {i}": f"idc{i}" for i in se.MPPT}, "MPPT", "A")
-        ch = alt.Chart(d).mark_line(strokeWidth=1.6).encode(
-            x=x, y=alt.Y("A:Q", title="กระแส DC (A)", scale=alt.Scale(domain=[0, se.MPPT_IMAX_A * 1.08])),
-            color=MPPT_COLOR, detail="seg:N",
-            tooltip=[alt.Tooltip("ts:T", title="เวลา", format="%H:%M:%S"), "MPPT", alt.Tooltip("A:Q", format=".2f")])
-        refs = [(se.MPPT_IMAX_A, f"สูงสุด {se.MPPT_IMAX_A:.0f} A/MPPT", COLOR_ALERT),
-                (round(se.STRING_IMP_A * 2, 2), f"2 สตริง {se.STRING_IMP_A * 2:.1f} A", REF_MUTED),
-                (se.STRING_IMP_A, f"1 สตริง {se.STRING_IMP_A:.1f} A", REF_MUTED)]
-        st.altair_chart(_with_refs(ch, refs).properties(height=300, title="กระแส DC ขาเข้า ต่อ MPPT (A)"),
-                        width="stretch")
+        ch = line(d).encode(
+            x=x, y=alt.Y("A:Q", title=None, scale=alt.Scale(domain=[0, se.MPPT_IMAX_A * 1.08])),
+            color=MPPT_COLOR, detail="seg:N", tooltip=[tip_t, "MPPT", alt.Tooltip("A:Q", title="A", format=".2f")])
+        panel(ch, [(se.MPPT_IMAX_A, f"สูงสุด {se.MPPT_IMAX_A:.0f} A", COLOR_ALERT),
+                   (round(se.STRING_IMP_A * 2, 2), f"2 สตริง {se.STRING_IMP_A * 2:.1f} A", REF_MUTED),
+                   (se.STRING_IMP_A, f"1 สตริง {se.STRING_IMP_A:.1f} A", REF_MUTED)],
+              "① กระแส DC ขาเข้า ต่อ MPPT (A)")
     with c2:
         d = melt(se.PHASES, "เฟส", "A")
-        ch = alt.Chart(d).mark_line(strokeWidth=1.6).encode(
-            x=x, y=alt.Y("A:Q", title="กระแส AC (A)", scale=alt.Scale(domain=[0, se.AC_IMAX_A * 1.08])),
-            color=PHASE_COLOR, detail="seg:N",
-            tooltip=[alt.Tooltip("ts:T", title="เวลา", format="%H:%M:%S"), "เฟส", alt.Tooltip("A:Q", format=".1f")])
-        refs = [(se.AC_IMAX_A, f"พิกัด {se.AC_IMAX_A:.1f} A", COLOR_ALERT)]
-        st.altair_chart(_with_refs(ch, refs).properties(height=300, title="กระแส AC ขาออก ต่อเฟส R / S / T (A)"),
-                        width="stretch")
+        ch = line(d).encode(
+            x=x, y=alt.Y("A:Q", title=None, scale=alt.Scale(domain=[0, se.AC_IMAX_A * 1.08])),
+            color=PHASE_COLOR, detail="seg:N", tooltip=[tip_t, "เฟส", alt.Tooltip("A:Q", title="A", format=".1f")])
+        panel(ch, [(se.AC_IMAX_A, f"พิกัด {se.AC_IMAX_A:.0f} A", COLOR_ALERT)],
+              "② กระแส AC ขาออก ต่อเฟส R / S / T (A)")
     c3, c4 = st.columns(2)
     with c3:
         d = melt({"DC ขาเข้า": "pdc_kw", "AC ขาออก": "pac_kw"}, "ฝั่ง", "kW")
-        ch = alt.Chart(d).mark_line(strokeWidth=1.8).encode(
-            x=x, y=alt.Y("kW:Q", title="กำลัง (kW)", scale=alt.Scale(domain=[0, se.RATED_KW * 1.12])),
+        ch = line(d, 1.8).encode(
+            x=x, y=alt.Y("kW:Q", title=None, scale=alt.Scale(domain=[0, se.RATED_KW * 1.12])),
             color=alt.Color("ฝั่ง:N", scale=alt.Scale(domain=["DC ขาเข้า", "AC ขาออก"], range=[COLOR_SOLAR, COLOR_GRID2]),
-                            legend=alt.Legend(orient="bottom", title=None)),
-            detail="seg:N",
-            tooltip=[alt.Tooltip("ts:T", title="เวลา", format="%H:%M:%S"), "ฝั่ง", alt.Tooltip("kW:Q", format=".2f")])
-        refs = [(se.RATED_KW, f"พิกัด {se.RATED_KW:.0f} kW", COLOR_ALERT)]
-        st.altair_chart(_with_refs(ch, refs).properties(height=300, title="กำลังไฟฟ้า DC ขาเข้า เทียบ AC ขาออก (kW)"),
-                        width="stretch")
+                            legend=alt.Legend(orient="bottom", title=None, columns=3, symbolType="stroke",
+                                              symbolStrokeWidth=3)),
+            detail="seg:N", tooltip=[tip_t, "ฝั่ง", alt.Tooltip("kW:Q", title="kW", format=".2f")])
+        panel(ch, [(se.RATED_KW, f"พิกัด {se.RATED_KW:.0f} kW", COLOR_ALERT)],
+              "③ กำลังไฟฟ้า DC ขาเข้า เทียบ AC ขาออก (kW)")
     with c4:
         d = melt({f"MPPT {i}": f"vdc{i}" for i in se.MPPT}, "MPPT", "V")
-        ch = alt.Chart(d).mark_line(strokeWidth=1.6).encode(
-            x=x, y=alt.Y("V:Q", title="แรงดัน DC (V)"), color=MPPT_COLOR, detail="seg:N",
-            tooltip=[alt.Tooltip("ts:T", title="เวลา", format="%H:%M:%S"), "MPPT", alt.Tooltip("V:Q", format=".0f")])
-        st.altair_chart(ch.properties(height=300, title="แรงดัน DC ขาเข้า ต่อ MPPT (V)"), width="stretch")
+        ch = line(d).encode(
+            x=x, y=alt.Y("V:Q", title=None, scale=alt.Scale(domain=[0, 1000])),
+            color=MPPT_COLOR, detail="seg:N", tooltip=[tip_t, "MPPT", alt.Tooltip("V:Q", title="V", format=".0f")])
+        panel(ch, [(se.MPPT_V_MAX, f"MPPT สูงสุด {se.MPPT_V_MAX:.0f} V", REF_MUTED),
+                   (se.MPPT_V_MIN, f"MPPT ต่ำสุด {se.MPPT_V_MIN:.0f} V", REF_MUTED)],
+              "④ แรงดัน DC ขาเข้า ต่อ MPPT (V)")
     st.caption(
-        "เส้นขาด = ช่วงที่ data logger ไม่ส่งข้อมูล · กระแส DC ของ MPPT ที่ต่อ 2 สตริงควรสูงกว่า 1 สตริงราว 2 เท่า · "
-        "กระแส AC 3 เฟสควรใกล้กัน (ไม่สมดุลเกิน ~5% ให้ตรวจขั้วสาย/เบรกเกอร์ฝั่ง AC) · "
-        "กำลัง DC กับ AC ห่างกัน = การสูญเสียในอินเวอร์เตอร์ (ปกติ 2–4%)")
+        "① MPPT ที่ต่อ 2 สตริงควรมีกระแสราว 2 เท่าของ MPPT ที่ต่อ 1 สตริง · "
+        "② กระแส 3 เฟสควรใกล้กัน (ไม่สมดุลเกิน ~5% ให้ตรวจขั้วสาย/เบรกเกอร์ฝั่ง AC) · "
+        "③ เส้น DC กับ AC ห่างกัน = การสูญเสียในอินเวอร์เตอร์ (ปกติ 2–4%) · AC ตกเป็น 0 ขณะ DC ยังมี = เครื่องหยุดจ่ายไฟ · "
+        "④ แรงดันพุ่งขึ้น ~850 V ค้าง = อินเวอร์เตอร์หยุดดึงไฟจากแผง · เส้นขาด = ช่วงที่ logger ไม่ส่งข้อมูล"
+        + (f" · ซ่อนข้อมูลกลางคืน {n_night} จุด" if n_night else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -445,9 +476,10 @@ def render(kpi_card) -> None:
 
     k1, k2, k3, k4, k5, k6 = st.columns(6)
     with k1:
+        gap_kwh = float(daily["gap_kwh"].sum()) if "gap_kwh" in daily.columns else 0.0
         kpi_card("ผลิตได้ (AC)", f"{ac_total:,.0f} kWh", COLOR_SOLAR,
-                 f"วันที่ {_fmt_date(start)}" if single else
-                 f"{n_days} วัน · {_fmt_date(start)} – {_fmt_date(end)}")
+                 (f"วันที่ {_fmt_date(start)}" if single else f"{n_days} วัน · {_fmt_date(start)} – {_fmt_date(end)}")
+                 + (f" · + {gap_kwh:,.0f} kWh ระบุวันไม่ได้ (logger ขาด)" if gap_kwh >= 1 else ""))
     with k2:
         pct = avg_day / target * 100 if target else 0
         kpi_card("ผลิตวันนั้น" if single else "เฉลี่ยต่อวัน", f"{avg_day:,.0f} kWh",

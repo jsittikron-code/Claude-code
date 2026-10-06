@@ -75,6 +75,7 @@ KWP_TOTAL = 1243.0          # กำลังติดตั้ง DC (2,260 แ
 AC_IMAX_A = 158.8           # กระแส AC สูงสุดต่อเฟสของอินเวอร์เตอร์ SUN-100K-G03
 MPPT_IMAX_A = 40.0          # กระแส DC เข้าสูงสุดต่อ MPPT
 STRING_IMP_A = 13.42        # กระแสที่จุดกำลังสูงสุดของสตริง (แผง EVE GREP 550 ที่ STC)
+MPPT_V_MIN, MPPT_V_MAX = 200.0, 850.0   # ช่วงแรงดันที่ MPPT ทำงาน (แบบ SLD แผ่น INVERTER)
 PHASES = {"R": "iac_r", "S": "iac_s", "T": "iac_t"}
 AC_V_COLS = ["vac_r", "vac_s", "vac_t"]
 PHASE_IMBAL_MIN_A = 5.0     # คิดความไม่สมดุลเฉพาะตอนกระแสเฉลี่ย ≥ 5 A (ตอนเช้า/เย็นกระแสน้อย % จะแกว่ง)
@@ -113,6 +114,13 @@ CURTAIL_VDC = 800.0         # ... ทั้งที่ Vdc ลอยสูง =
 COVERAGE_ALERT = 40.0       # เครื่องส่งข้อมูลน้อยกว่า 40% ของเครื่องที่ครบที่สุดในวันนั้น
 EFF_MIN_COVERAGE = 80.0     # คิดประสิทธิภาพ DC→AC เฉพาะวันที่ข้อมูลครบ ≥ 80%
 DAY_COMPLETE_HOUR = 17.5    # ข้อมูลวันล่าสุดสิ้นสุดก่อน 17:30 = ดึง export ระหว่างวัน ยังไม่ครบวัน
+# ยอด AC รายวันปกติใช้ Eday (มิเตอร์รายวัน) แต่ถ้า Eday ต่ำกว่าผลต่างมิเตอร์สะสม Ecum ในวันเดียวกันชัดเจน
+# ให้ใช้ Ecum แทน — #6 ตั้งแต่ 1 ต.ค. 69 ส่ง Eday = 0 ทั้งที่ Ecum เพิ่ม 380 kWh (03/10)
+# วันที่ข้อมูลครบ ทั้งสองค่าต่างกันไม่เกิน 1 kWh (ตรวจแล้ว 236 วัน) จึงใช้เกณฑ์ห่างกันเกิน 2 kWh และ 5%
+ECUM_OVER_EDAY_KWH = 2.0
+ECUM_OVER_EDAY_PCT = 0.05
+ECUM_DAY_MAX_KWH = RATED_KW * 14   # ผลต่าง Ecum วันเดียวเกินนี้ = ค่าเพี้ยน ไม่ใช้
+GAP_ENERGY_MIN_KWH = 1.0    # ผลิตระหว่างที่ logger เงียบข้ามวัน ≥ เท่านี้ → แจ้งว่ามีพลังงานที่ระบุวันไม่ได้
 
 # คอลัมน์ในไฟล์ EVE → ชื่อสั้นในฐาน (คอลัมน์ที่ไม่อยู่ในนี้ไม่เก็บ: PV7/PV8 เป็น 0 ทุกแถว,
 # เซนเซอร์อุณหภูมิแวดล้อม/ขดลวดอ่านได้ −100 °C, Grid/Consumption มีค่าผิดปกติ)
@@ -502,6 +510,25 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         agg[f"{c}_max"] = (c, "max")
     daily = valid.groupby(["sn", "date"], as_index=False).agg(**agg)
     daily["ecum_delta"] = daily["ecum_max"] - daily["ecum_min"]
+    daily["ac_eday"] = daily["ac_kwh"]
+    use_ecum = (daily["ecum_delta"].between(0, ECUM_DAY_MAX_KWH)
+                & (daily["ecum_delta"] - daily["ac_eday"].fillna(0)
+                   > np.maximum(ECUM_OVER_EDAY_KWH, ECUM_OVER_EDAY_PCT * daily["ecum_delta"])))
+    daily["ac_kwh"] = daily["ac_eday"].where(~use_ecum, daily["ecum_delta"])
+    daily["ac_src"] = np.where(use_ecum, "Ecum", "Eday")
+
+    # พลังงานที่ผลิตระหว่างที่ logger เงียบข้ามวัน (แถวก่อน-หลังอยู่คนละวัน) — Ecum เพิ่มแต่ไม่มีแถวในวันไหน
+    # ให้นับได้ จึงไม่อยู่ในยอดรายวันใด ๆ เก็บไว้ที่วันที่เริ่มเงียบ เพื่อแจ้งให้รู้ว่ายอดรวมต่ำกว่าจริงเท่าไร
+    v = valid.dropna(subset=["ecum_kwh"]).sort_values(["sn", "ts"])
+    nxt = v.groupby("sn")[["ts", "ecum_kwh", "date"]].shift(-1)
+    jump = (nxt["ecum_kwh"] - v["ecum_kwh"])
+    cross = (nxt["date"] != v["date"]) & nxt["date"].notna() & (jump >= GAP_ENERGY_MIN_KWH) & (jump < ECUM_DAY_MAX_KWH * 7)
+    gaps = pd.DataFrame({"sn": v.loc[cross, "sn"], "date": v.loc[cross, "date"], "gap_kwh": jump[cross],
+                         "gap_from": v.loc[cross, "ts"], "gap_to": nxt.loc[cross, "ts"]})
+    gaps = gaps.groupby(["sn", "date"], as_index=False).agg(
+        gap_kwh=("gap_kwh", "sum"), gap_from=("gap_from", "min"), gap_to=("gap_to", "max"))
+    daily = daily.merge(gaps, on=["sn", "date"], how="left")
+    daily["gap_kwh"] = daily["gap_kwh"].fillna(0.0)
 
     # สุขภาพสตริง: median ของ Vdc / Pdc / Idc ช่วงแดดเต็ม (10–14 น.) ขณะเครื่องผลิตจริง
     m = valid[valid["hour"].between(MIDDAY_HOURS[0], MIDDAY_HOURS[1] - 1)
@@ -776,8 +803,37 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
                     "text": f"ระบบถูกจำกัดกำลัง (Zero-export) อย่างน้อย 1 ชม. ใน {len(cur)} วัน — {lst} · "
                             "ผลผลิตวันนั้นต่ำเพราะโรงงานโหลดต่ำ ไม่ใช่เพราะแดดหรือเครื่องเสีย"})
 
+    # พลังงานที่ผลิตช่วง logger เงียบข้ามวัน — มิเตอร์สะสมยืนยันว่าผลิตจริง แต่ระบุวันไม่ได้ จึงไม่อยู่ในยอดรายวัน
+    sys_gap_days: set = set()
+    if "gap_kwh" in daily.columns:
+        gp = daily[daily["gap_kwh"] > 0]
+        # วันที่เกือบทุกเครื่องเงียบพร้อมกัน = export รอบนั้นจบก่อนแดดหมด ไม่ใช่เครื่องหรือ logger เสีย
+        # รวมเป็นรายการเดียว (เดิมขึ้นแยก 11 บรรทัด และทำให้นับว่า "ต้องตรวจ 11 เครื่อง" ผิด ๆ)
+        cnt = gp.groupby("date")["sn"].nunique()
+        sys_gap_days = set(cnt[cnt >= N_INVERTERS // 2].index)
+        for d in sorted(sys_gap_days):
+            g = gp[gp["date"] == d]
+            out.append({"level": "info", "inv_no": 0,
+                        "text": f"{fmt_d(d)} ข้อมูลหยุดราว {g['gap_from'].median():%H:%M} พร้อมกันทุกเครื่อง "
+                                f"(ดึง export ก่อนแดดหมด) — หลังจากนั้นผลิตต่ออีกรวม {g['gap_kwh'].sum():,.0f} kWh "
+                                "(มิเตอร์สะสมยืนยัน) ซึ่งยังไม่อยู่ในยอดรายวัน และไม่นับวันนั้นในค่าเฉลี่ย · "
+                                "ดึงรายงานวันนั้นซ้ำจาก EVE แล้วกดอัปเดตจะได้ยอดครบ"})
+        for sn, g in gp[~gp["date"].isin(sys_gap_days)].groupby("sn"):
+            no = int(g["inv_no"].iloc[0])
+            spans = ", ".join(f"{r.gap_from:%d/%m %H:%M} → {r.gap_to:%d/%m %H:%M} ({r.gap_kwh:,.0f} kWh)"
+                              for r in g.itertuples())
+            out.append({"level": "warning", "inv_no": no,
+                        "text": f"#{no} (SN {sn}) ผลิตได้ {g['gap_kwh'].sum():,.0f} kWh ในช่วงที่ logger ไม่ส่งข้อมูล "
+                                f"(มิเตอร์สะสม Ecum ยืนยัน) แต่ระบุวันไม่ได้ จึงไม่อยู่ในยอดรายวัน — {spans}"})
+    src = daily[daily.get("ac_src", pd.Series(dtype=str)) == "Ecum"] if "ac_src" in daily.columns else daily.iloc[0:0]
+    for r in src.itertuples():
+        out.append({"level": "info", "inv_no": int(r.inv_no),
+                    "text": f"#{int(r.inv_no)} วันที่ {fmt_d(r.date)} มิเตอร์รายวัน (Eday) ส่งค่าผิด "
+                            f"({r.ac_eday:,.0f} kWh) — ใช้ผลต่างมิเตอร์สะสม Ecum {r.ac_kwh:,.0f} kWh แทน"})
+
     # วันที่ข้อมูลขาดช่วงบ่าย (ไม่ใช่วันล่าสุด ซึ่งปกติยังไม่ครบเพราะเพิ่งดึง) — เติมได้ด้วยการดึงซ้ำ
-    gaps = {d: t for d, t in partial_days(daily).items() if d != daily["date"].max()}
+    gaps = {d: t for d, t in partial_days(daily).items()
+            if d != daily["date"].max() and d not in sys_gap_days}     # วันที่รวมไว้ในรายการด้านบนแล้ว
     if gaps:
         lst = ", ".join(f"{fmt_d(d)} (ถึง {t:%H:%M})" for d, t in gaps.items())
         out.append({"level": "info", "inv_no": 0,
