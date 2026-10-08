@@ -34,6 +34,7 @@ DEPT_DIR = (
 )
 
 RETRIES = 6          # จำนวนครั้งที่ลองเปิดไฟล์ด้วย Excel ก่อนยอมแพ้ (ดูเหตุผลใน recalc)
+RECALC_CYCLES = 3    # ทำรอบ เปิด-คำนวณ-เซฟ-ตรวจไฟล์ ซ้ำได้กี่รอบ ถ้าไฟล์ที่เซฟยังว่าง (ดู main)
 
 TARGETS = [
     os.path.join(DEPT_DIR, r"2.เรื่องMTBF-MTTR\รายละเอียด"
@@ -82,6 +83,29 @@ def _canary_filled(wb, sheet: str, col_name: str):
         return v is not None and str(v).strip() != ""
     except Exception as e:
         print(f"  ตรวจช่องสูตรไม่ได้: {e}")
+        return None
+
+
+def _saved_canary(path: str, sheet: str, col_name: str):
+    """อ่านช่องสูตรแถวสุดท้ายจาก "ไฟล์บนดิสก์" (ค่าที่ Excel ฝังไว้) → True/False/None"""
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        ws = wb[sheet]
+        hdr = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        if col_name not in hdr:
+            return None
+        ci = hdr.index(col_name)
+        last = None
+        for row in ws.iter_rows(min_row=max(ws.max_row - 5, 2), values_only=True):
+            if row[0] is not None:
+                last = row
+        wb.close()
+        if last is None:
+            return None
+        v = last[ci]
+        return v is not None and str(v).strip() != ""
+    except Exception:
         return None
 
 
@@ -156,6 +180,19 @@ def recalc(paths) -> bool:
                             time.sleep(2)
                     wb.Save()
                     wb.Close(False)
+                    # ค่าที่ Excel มีในหน่วยความจำ กับค่าที่ลงไฟล์จริง ไม่ใช่สิ่งเดียวกัน
+                    # 6 และ 8 ต.ค. 2569: ตัวเช็คข้างบนเห็นค่าครบ เซฟ ปิด แล้วไฟล์บนดิสก์ว่างทั้งคอลัมน์
+                    # จึงอ่านไฟล์ที่เซฟแล้วกลับมาดูทันที และพิมพ์เวลา/ขนาดไฟล์ไว้เป็นหลักฐาน
+                    # (ตัวตัดสินจริงคือ verify() ใน main ซึ่งอ่านไฟล์เหมือนที่แดชบอร์ดอ่าน)
+                    if os.path.basename(p) == os.path.basename(VERIFY[0]):
+                        time.sleep(1)
+                        st_ = os.stat(p)
+                        on_disk = _saved_canary(p, VERIFY[1], VERIFY[2])
+                        print(f"  ไฟล์หลังเซฟ: {time.strftime('%H:%M:%S', time.localtime(st_.st_mtime))} "
+                              f"{st_.st_size:,} B · ช่องสูตรแถวสุดท้ายบนดิสก์: "
+                              f"{'มีค่า' if on_disk else 'ว่าง' if on_disk is False else 'อ่านไม่ได้'}")
+                        if on_disk is False:
+                            computed = False
                     if computed is True:
                         print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
                     elif computed is None:
@@ -253,28 +290,57 @@ def export_parquet() -> bool:
         os.makedirs(out_dir, exist_ok=True)
         tmp = out + ".tmp"
         df.to_parquet(tmp, index=False)
-        os.replace(tmp, out)      # เปลี่ยนชื่อทับทีเดียว กันไฟล์ครึ่ง ๆ ตอน OneDrive sync
+        # เปลี่ยนชื่อทับทีเดียว กันไฟล์ครึ่ง ๆ ตอน OneDrive sync
+        # แต่บน Windows ถ้าแดชบอร์ดตัวใดกำลังอ่าน parquet อยู่พอดี replace จะล้ม (PermissionError)
+        # แดชบอร์ด 7 ตัวอ่านไฟล์นี้ตลอด จึงลองซ้ำสั้น ๆ ก่อนยอมแพ้ และถ้ายอมแพ้ต้องบอกดัง ๆ
+        # (1 ต.ค. และ 8 ต.ค. 2569 Excel เซฟสำเร็จแต่ parquet ค้างของเก่า โดยไม่มีใครรู้)
+        last_err = None
+        for attempt in range(6):
+            try:
+                os.replace(tmp, out)
+                last_err = None
+                break
+            except PermissionError as e:
+                last_err = e
+                time.sleep(1 + attempt)
+        if last_err is not None:
+            raise last_err
         print("  export parquet: %d แถว %d คอลัมน์ (%.1f MB)"
               % (len(df), df.shape[1], os.path.getsize(out) / 1e6))
         return True
     except Exception as e:
-        print(f"  export parquet ไม่สำเร็จ: {e}")
-        print("  ไม่กระทบการอัปเดต แดชบอร์ดจะถอยไปอ่านไฟล์ Excel เอง")
-        return True   # ไม่ถือเป็นความล้มเหลวของทั้งงาน
+        print(f"  *** export parquet ไม่สำเร็จ: {e}")
+        print("  *** แดชบอร์ด OEE จะยังเห็นตัวเลขของรอบก่อน จนกว่าจะรัน  python etl_recalc_excel.py  ใหม่")
+        return False
 
 
 def main() -> int:
     print("สั่ง Excel คำนวณสูตรและเซฟ")
-    # ถึง recalc จะล้ม ก็ยังต้องตรวจและ export ต่อ เพราะบางไฟล์อาจสำเร็จไปแล้ว
-    # และ parquet ที่ได้ยังดีกว่าไม่มีเลย
-    ok_recalc = recalc(TARGETS)
-    ok_verify = verify()
-    export_parquet()
+    # ตัวตัดสินว่าสำเร็จคือ verify() ซึ่งอ่านไฟล์ที่เซฟแล้วแบบเดียวกับที่แดชบอร์ดอ่าน
+    # ไม่ใช่สิ่งที่ Excel บอกผ่าน COM — ล้มมา 3 ใน 5 รอบ (1, 6, 8 ต.ค. 2569) ทั้งที่ COM บอกว่าเรียบร้อย
+    # ถ้ายังว่าง ให้ทำซ้ำทั้งรอบ (เปิด-คำนวณ-เซฟ) โดยเว้นช่วงให้ OneDrive ปล่อยไฟล์ก่อน
+    ok_recalc = ok_verify = False
+    for cycle in range(1, RECALC_CYCLES + 1):
+        if cycle > 1:
+            print(f"\n  ช่องสูตรยังว่างหลังเซฟ — รอ {10 * (cycle - 1)} วิ แล้วทำซ้ำรอบ {cycle}/{RECALC_CYCLES}")
+            time.sleep(10 * (cycle - 1))
+        ok_recalc = recalc(TARGETS)
+        ok_verify = verify()
+        if ok_verify:
+            break
+    # export ก็ต่อเมื่อค่าในไฟล์ครบ ไม่งั้น parquet ที่ได้จะว่างทั้งคอลัมน์ ซึ่งแย่กว่าของเก่า
+    # (แดชบอร์ดเห็น 'ไม่ระบุ' ทั้งวัน) ของเก่าแค่ขาดวันล่าสุด และตัวตรวจสุขภาพจะฟ้องให้
+    ok_export = export_parquet() if ok_verify else False
+    if ok_verify and not ok_export:
+        pass                       # export พิมพ์เหตุผลเองแล้ว
+    elif not ok_verify:
+        print("\n  *** ไม่ได้ export parquet เพราะช่องสูตรในไฟล์ยังว่างหลังลอง %d รอบ" % RECALC_CYCLES)
+        print("  *** เปิดไฟล์เรื่อง 3 ด้วย Excel กด Save 1 ครั้ง แล้วรัน  python etl_recalc_excel.py")
     if not ok_recalc:
         print("\n  สั่ง Excel ไม่สำเร็จบางไฟล์")
         print("  ถ้าตัวเลขบนแดชบอร์ดหาย ให้เปิดไฟล์เรื่อง 2 และ 3 ด้วย Excel")
         print("  แล้วกด Save 1 ครั้ง หรือรัน  python etl_recalc_excel.py  ใหม่อีกรอบ")
-    return 0 if (ok_recalc and ok_verify) else 1
+    return 0 if (ok_recalc and ok_verify and ok_export) else 1
 
 
 if __name__ == "__main__":

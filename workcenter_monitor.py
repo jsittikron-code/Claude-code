@@ -576,7 +576,10 @@ def machine_status(day_df: pd.DataFrame, all_machines: list[str],
             "Machine": mc,
             "สถานะ": status,
             "รายละเอียด": detail,
-            "พนักงาน": str(last_row["Name"]),
+            # ใบงาน MOS บางใบไม่มีชื่อคน str(NaN) จะกลายเป็นคำว่า "nan" บนการ์ด (เจอ 8 ต.ค. 2569 5 เครื่อง)
+            "พนักงาน": (str(last_row["Name"]).strip()
+                        if pd.notna(last_row["Name"]) and str(last_row["Name"]).strip() not in ("", "nan")
+                        else "ไม่ระบุชื่อ"),
             "กิจกรรมล่าสุด": last_end,
             "Job": int(work["Job"].nunique()),
             "ชิ้น": float(work["Qty"].sum()),
