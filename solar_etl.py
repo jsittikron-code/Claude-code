@@ -117,6 +117,9 @@ CURTAIL_PAC_KW = 20.0       # ผลิตต่ำ ...
 CURTAIL_VDC = 800.0         # ... ทั้งที่ Vdc ลอยสูง = อินเวอร์เตอร์ถอยออกจาก MPP เอง
 COVERAGE_ALERT = 40.0       # เครื่องส่งข้อมูลน้อยกว่า 40% ของเครื่องที่ครบที่สุดในวันนั้น
 EFF_MIN_COVERAGE = 80.0     # คิดประสิทธิภาพ DC→AC เฉพาะวันที่ข้อมูลครบ ≥ 80%
+EFF_MIN_MID_FRAMES = 40     # และมีเฟรมช่วงแดดเต็ม (10–14 น.) อย่างน้อยเท่านี้ (วันปกติ 75–216)
+DAYLIGHT_ROWS_HOURS = (6.0, 18.5)   # ช่วงที่นับว่าเป็น "แถวช่วงผลิต" (06:00–18:29)
+DAY_MIN_ROWS = 5            # น้อยกว่านี้ = วันนั้นไม่มีข้อมูลช่วงผลิต (logger ส่งแต่กลางคืน)
 DAY_COMPLETE_HOUR = 17.5    # ข้อมูลวันล่าสุดสิ้นสุดก่อน 17:30 = ดึง export ระหว่างวัน ยังไม่ครบวัน
 # ยอด AC รายวันปกติใช้ Eday (มิเตอร์รายวัน) แต่ถ้า Eday ต่ำกว่าผลต่างมิเตอร์สะสม Ecum ในวันเดียวกันชัดเจน
 # ให้ใช้ Ecum แทน — #6 ตั้งแต่ 1 ต.ค. 69 ส่ง Eday = 0 ทั้งที่ Ecum เพิ่ม 380 kWh (03/10)
@@ -186,8 +189,15 @@ def _move(src: str, dest: str) -> None:
         os.rename(src, dest)
     except OSError:
         tmp = dest + ".tmp"
-        shutil.copy2(src, tmp)
-        os.rename(tmp, dest)
+        try:
+            shutil.copy2(src, tmp)
+            os.rename(tmp, dest)
+        except OSError:
+            try:                                   # อย่าทิ้ง .tmp ค้างไว้ในโฟลเดอร์ดิบ (เคยค้าง 1 ไฟล์ 2 ต.ค. 69)
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
         os.remove(src)
 
 
@@ -560,7 +570,9 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         daily[f"nstr{i}"] = daily["sn"].map(nstr).fillna(1).astype("int8")
 
     # เฟรม fault นับจากทุกแถว (รวมเฟรมเสียที่ถูกล้างค่า)
-    nf = (df[~df["status"].isin(OK_STATUS)].groupby(["sn", "date"]).size()
+    # นับเฉพาะเฟรมที่ไม่ใช่เฟรมเสีย — เฟรมเสีย (status 10000) เป็นข้อมูลขยะจาก logger ไม่ใช่เครื่อง fault
+    # (#4 เคยถูกแจ้งว่า "Fault 1 ครั้ง" จากเฟรมเสียเฟรมเดียว แล้วถูกนับเป็นเครื่องที่ต้องตรวจ)
+    nf = (df[~df["status"].isin(OK_STATUS) & (df["flag"] == 0)].groupby(["sn", "date"]).size()
           .rename("n_fault").reset_index())
     daily = daily.merge(nf, on=["sn", "date"], how="left")
     daily["n_fault"] = daily["n_fault"].fillna(0).astype("int32")
@@ -569,8 +581,22 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     daily["coverage_pct"] = daily["n_rows"] / daily.groupby("date")["n_rows"].transform("max") * 100
     # DC มาจากการอินทิเกรตทุกเฟรม — เครื่องที่ logger ส่งข้อมูลขาดช่วง DC จะต่ำกว่าจริงมาก
     # (#6 ส่งมาแค่ ~12% ทำให้ AC/DC ออกมา 112% ซึ่งเป็นไปไม่ได้) จึงคิดเฉพาะวันที่ข้อมูลครบพอ
+    # ต้องมีเฟรมช่วงผลิตจริงมากพอด้วย — #6 วันที่ 25–27 ก.ย. ส่งแถวกลางคืนเป็นร้อยแต่กลางวันแค่ 0–29 แถว
+    # coverage จึงดูเหมือน 100% ทั้งที่ DC อินทิเกรตได้แค่เศษเดียว ออกมาเป็น 265% ซึ่งเป็นไปไม่ได้
     daily["eff_pct"] = (daily["ac_kwh"] / daily["dc_kwh"] * 100).where(
-        (daily["dc_kwh"] > 1) & (daily["coverage_pct"] >= EFF_MIN_COVERAGE))
+        (daily["dc_kwh"] > 1) & (daily["coverage_pct"] >= EFF_MIN_COVERAGE)
+        & (daily["n_mid"] >= EFF_MIN_MID_FRAMES))
+    daily.loc[daily["eff_pct"] > 100, "eff_pct"] = np.nan      # เกิน 100% = ข้อมูลไม่ครบ ไม่ใช่ค่าจริง
+
+    # วันที่ไม่มีแถวช่วงผลิต (06:00–18:30) เลย — Eday ที่ส่งมาตอนกลางคืนอาจเป็น 0 ทั้งที่ผลิตจริง (#6)
+    # ให้เป็น "ไม่มีข้อมูล" (NaN) ไม่ใช่ 0 kWh ผลผลิตวันนั้นถ้ามีจะอยู่ใน gap_kwh จากมิเตอร์สะสม
+    hf = valid["ts"].dt.hour + valid["ts"].dt.minute / 60          # ชั่วโมงทศนิยม — 18:28 ต้องไม่นับเป็นช่วงผลิต
+    nd = valid[(hf >= DAYLIGHT_ROWS_HOURS[0]) & (hf < DAYLIGHT_ROWS_HOURS[1])].groupby(["sn", "date"]).size()
+    daily = daily.merge(nd.rename("n_day").reset_index(), on=["sn", "date"], how="left")
+    daily["n_day"] = daily["n_day"].fillna(0).astype("int32")
+    no_day = (daily["n_day"] < DAY_MIN_ROWS) & (daily["ac_kwh"].fillna(0) <= 0)
+    daily.loc[no_day, "ac_kwh"] = np.nan
+    daily.loc[no_day, "ac_src"] = "ไม่มีข้อมูล"
 
     ev = (prof.groupby(["sn", "date"])[["outage", "curtail"]].sum() * 15).astype("int32")
     ev.columns = ["outage_min", "curtail_min"]
@@ -699,7 +725,7 @@ def inverter_summary(daily: pd.DataFrame) -> pd.DataFrame:
     mt = mppt_table(daily)
     rows = []
     for sn, g in daily.groupby("sn"):
-        days = g["date"].nunique()
+        days = int(g["ac_kwh"].notna().sum())        # นับเฉพาะวันที่มีข้อมูลจริง (วัน NaN = logger ไม่ส่ง)
         ac, dc = g["ac_kwh"].sum(), g["dc_kwh"].sum()
         m = mt[mt["sn"] == sn].set_index("mppt")
         # เครื่องที่ DC เป็น 0 ทั้งช่วง (ปลดวงจรซ่อม / เพิ่งกลับมา) ratio เป็นค่าว่างทั้งหมด
@@ -758,13 +784,17 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
     if daily.empty:
         return out
     summ = inverter_summary(daily)
+    mt = mppt_table(daily)
     fmt_d = lambda s: pd.Timestamp(s).strftime("%d/%m")
 
     # เครื่องที่ "ไม่มีแถวเลย" ไม่อยู่ใน summ — ต้องเทียบกับรายการ 11 ตัวเอง ไม่งั้นหายเงียบ
     # (logger หลุด / ปิดเครื่อง / ลืม export ไฟล์ของเครื่องนั้น) ทั้งที่ผลผลิตหายไปทั้งเครื่อง
     dates = sorted(daily["date"].unique())
     for sn, no in sorted(INVERTER_NO.items(), key=lambda kv: kv[1]):
-        have = set(daily.loc[daily["sn"] == sn, "date"])
+        g_sn = daily[daily["sn"] == sn]
+        # "มีข้อมูล" = วันที่สรุปยอด AC ได้ (ac_kwh ไม่ว่าง) — วันที่ logger ส่งแต่กลางคืนและ Eday = 0
+        # (#6 02/10, 05/10) ถูกตั้งเป็นว่างใน summarize() จึงนับว่าไม่มีข้อมูล · วันที่ใช้ Ecum แทนได้ (03/10) ยังนับว่ามี
+        have = set(g_sn.loc[g_sn["ac_kwh"].notna(), "date"])
         gone = [d for d in dates if d not in have]
         if not have:
             out.append({"level": "error", "inv_no": no,
@@ -772,9 +802,9 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
                                 "และ export จาก EVE ครบ 11 ไฟล์"})
         elif gone:
             out.append({"level": "error", "inv_no": no,
-                        "text": f"#{no} (SN {sn}) ไม่มีข้อมูล {len(gone)} วันที่เครื่องอื่นมี — "
+                        "text": f"#{no} (SN {sn}) ไม่มีข้อมูลช่วงผลิต {len(gone)} วันที่เครื่องอื่นมี — "
                                 + ", ".join(fmt_d(d) for d in gone[:10]) + (" ..." if len(gone) > 10 else "")
-                                + " (ผลผลิตวันนั้นไม่ถูกนับในยอดรวม)"})
+                                + " (ผลผลิตวันนั้นไม่ถูกนับในยอดรวม — ถ้ามิเตอร์สะสมเห็นว่าผลิต จะแจ้งแยกเป็น kWh ที่ระบุวันไม่ได้)"})
 
     for _, r in summ.iterrows():
         tag = f"#{r['inv_no']} (SN {r['sn']})"
@@ -789,10 +819,13 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
                         "text": f"{tag} เป็นเครื่องที่ระบบยังไม่รู้จัก (ไม่อยู่ในรายการ 11 ตัวเดิม) — ถ้าเปลี่ยน "
                                 "อินเวอร์เตอร์ใหม่ ให้แจ้งคนดูแลระบบเพิ่ม SN นี้ใน INVERTER_NO ของ solar_etl.py"})
         if r["status"].startswith("ตรวจสอบ"):
+            # แจ้งทุก MPPT ที่ต่ำกว่าเกณฑ์ ไม่ใช่แค่ตัวแย่สุด (#6 MPPT 5 ที่ 56% เคยถูกข้ามเพราะ MPPT 6 แย่กว่า)
+            low = mt[(mt["sn"] == r["sn"]) & (mt["ratio"] < 1 - MPPT_ALERT)].sort_values("ratio")
+            lst = ", ".join(f"MPPT {int(x.mppt)} {x.ratio*100:.0f}%" for x in low.itertuples())
             out.append({"level": "warning", "inv_no": r["inv_no"],
-                        "text": f"{tag} MPPT {r['mppt_worst']} ให้พลังงานต่อสตริงแค่ {r['mppt_min_ratio']*100:.0f}% "
-                                f"ของค่าเฉลี่ยต่อสตริงในเครื่อง (เกณฑ์ {100*(1-MPPT_ALERT):.0f}%) — "
-                                "ตรวจฝุ่น เงาบัง สตริง หรือฟิวส์ DC"})
+                        "text": f"{tag} พลังงานต่อสตริงต่ำกว่าค่าเฉลี่ยในเครื่อง (เกณฑ์ {100*(1-MPPT_ALERT):.0f}%): {lst} — "
+                                "ตรวจฝุ่น เงาบัง สตริงขาด หรือฟิวส์ DC (ถ้ามีแจ้งเตือนแรงดัน DC ของ MPPT เดียวกัน "
+                                "แปลว่าสตริงขาด/วงจรเปิด)"})
         if r["n_fault"] > 0:
             out.append({"level": "warning", "inv_no": r["inv_no"],
                         "text": f"{tag} มีเฟรมสถานะ Fault {r['n_fault']} ครั้ง — ดู event log ที่หน้าจออินเวอร์เตอร์"})
@@ -828,11 +861,18 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
         sys_gap_days = set(cnt[cnt >= N_INVERTERS // 2].index)
         for d in sorted(sys_gap_days):
             g = gp[gp["date"] == d]
+            med = g["gap_from"].median()
+            # เครื่องที่เงียบไปก่อนเครื่องอื่นเกิน 1 ชม. = logger ของเครื่องนั้นหลุดเอง ไม่ใช่เพราะ export จบ
+            # (#3 15/09 หยุดส่ง 12:31 ขณะเครื่องอื่นส่งถึง 15:40 — ขาดไป 107 kWh มากกว่าเครื่องอื่น 10 เท่า)
+            early = g[g["gap_from"] < med - pd.Timedelta(hours=1)]
+            note = ("" if early.empty else " · ยกเว้น " + ", ".join(
+                f"#{int(x.inv_no)} ที่หยุดส่งตั้งแต่ {x.gap_from:%H:%M} ({x.gap_kwh:,.0f} kWh) — logger ของเครื่องนั้นหลุดเอง"
+                for x in early.itertuples()))
             out.append({"level": "info", "inv_no": 0,
-                        "text": f"{fmt_d(d)} ข้อมูลหยุดราว {g['gap_from'].median():%H:%M} พร้อมกันทุกเครื่อง "
+                        "text": f"{fmt_d(d)} ข้อมูลหยุดราว {med:%H:%M} พร้อมกันทุกเครื่อง "
                                 f"(ดึง export ก่อนแดดหมด) — หลังจากนั้นผลิตต่ออีกรวม {g['gap_kwh'].sum():,.0f} kWh "
                                 "(มิเตอร์สะสมยืนยัน) ซึ่งยังไม่อยู่ในยอดรายวัน และไม่นับวันนั้นในค่าเฉลี่ย · "
-                                "ดึงรายงานวันนั้นซ้ำจาก EVE แล้วกดอัปเดตจะได้ยอดครบ"})
+                                "ดึงรายงานวันนั้นซ้ำจาก EVE แล้วกดอัปเดตจะได้ยอดครบ" + note})
         for sn, g in gp[~gp["date"].isin(sys_gap_days)].groupby("sn"):
             no = int(g["inv_no"].iloc[0])
             spans = ", ".join(f"{r.gap_from:%d/%m %H:%M} → {r.gap_to:%d/%m %H:%M} ({r.gap_kwh:,.0f} kWh)"
@@ -1024,11 +1064,17 @@ def run_update(rebuild: bool = False, check: bool = False, out=print) -> int:
     newest = df["ts"].max()
     out(f"  ข้อมูลตั้งแต่ {daily['date'].min():%d/%m/%Y} ถึง {last:%d/%m/%Y}  ({span} วัน)"
         f"  ล่าสุด {newest:%d/%m/%Y %H:%M}")
-    gap_days = (dt.date.today() - newest.date()).days
+    # วันล่าสุดที่ "ควรมีข้อมูลครบแล้ว": ก่อน 19:00 คือเมื่อวาน (วันนี้ยังผลิตไม่จบ) หลังจากนั้นคือวันนี้
+    # ผู้ใช้กดตอนเช้าทุกวัน ถ้าเทียบกับวันนี้ตรง ๆ จะขึ้นเตือน "ขาด 1 วัน" ทุกเช้าทั้งที่ข้อมูลครบแล้ว
+    now = dt.datetime.now()
+    expect = now.date() if now.hour >= 19 else now.date() - dt.timedelta(days=1)
+    gap_days = (expect - newest.date()).days
     if gap_days >= 1:
-        out(f"\n  *** ข้อมูลล่าสุดถึง {newest:%d/%m/%Y} — ยังขาด {gap_days} วันถึงวันนี้ ***\n"
-            "      ตอนดึงรายงานในเว็บ EVE ให้เลือกช่วงวันที่ให้ถึงวันนี้"
+        out(f"\n  *** ข้อมูลล่าสุดถึง {newest:%d/%m/%Y} — ยังขาดถึง {expect:%d/%m/%Y} อีก {gap_days} วัน ***\n"
+            "      ตอนดึงรายงานในเว็บ EVE ให้เลือกช่วงวันที่ให้ถึงวันล่าสุด"
             " (ไฟล์ที่ได้มีข้อมูลเฉพาะช่วงวันที่ที่เลือกไว้)")
+    else:
+        out(f"  ข้อมูลครบถึง {newest:%d/%m/%Y} แล้ว (ล่าสุดที่เป็นไปได้ ณ ตอนนี้)")
     ld = daily[daily["date"] == last].sort_values("inv_no")
     out(f"\n  ผลผลิตวัน {last:%d/%m/%Y}  รวม {ld['ac_kwh'].sum():,.0f} kWh"
         f"  (เป้า MIN {TARGET_KWH_DAY['MIN (PSH 4.0)']:,.0f} · MAX {TARGET_KWH_DAY['MAX (PSH 4.5)']:,.0f})")
