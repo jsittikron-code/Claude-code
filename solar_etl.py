@@ -65,7 +65,24 @@ INVERTER_NO = {
     "2106114215": 1, "2203014488": 2, "2203014490": 3, "2205059038": 4,
     "2205059053": 5, "2205059057": 6, "2208109254": 7, "2208109291": 8,
     "2208109310": 9, "2208109322": 10, "2301130556": 11,
+    "2301130562": 6,            # เครื่อง #6 ตัวใหม่ (เปลี่ยน 14 ต.ค. 69) — ดู REPLACED
 }
+# เปลี่ยนอินเวอร์เตอร์: {SN เดิม: (SN ใหม่, วันที่เปลี่ยน)} — SN ใหม่ใช้เลขเครื่องเดิม ข้อมูลเก่ายังอยู่ใต้ SN เดิม
+# ก่อนวันเปลี่ยนคาดหวังข้อมูลจาก SN เดิม ตั้งแต่วันเปลี่ยนคาดหวังจาก SN ใหม่ (ไม่งั้นจะฟ้อง "ขาด #6" ตลอดไป)
+# 14 ต.ค. 69: #6 (2205059057 logger เงียบตั้งแต่ 5 ต.ค. 22:22) ถูกแทนด้วย 2301130562 บน logger เดิม 2382371520
+# เห็นครั้งแรก 11:51 (Standby, Vdc 7 V) เริ่มจ่ายไฟ 15:12 — ลิงก์มิเตอร์ของทั้งระบบกลับมาราว 14:00 วันเดียวกัน
+REPLACED = {"2205059057": ("2301130562", "2026-10-14")}
+
+
+def expected_sns(date) -> set:
+    """SN ที่ควรมีข้อมูลในวันนั้น (11 ตัว) — ตัด SN เดิมของเครื่องที่ถูกเปลี่ยนไปแล้ว และ SN ใหม่ก่อนวันติดตั้ง"""
+    d = pd.Timestamp(date)
+    out = set(INVERTER_NO)
+    for old, (new, when) in REPLACED.items():
+        out.discard(new if d < pd.Timestamp(when) else old)
+    return out
+
+
 RATED_KW = 100.0            # พิกัด AC ต่อเครื่อง
 N_INVERTERS = 11
 AC_TOTAL_KW = RATED_KW * N_INVERTERS
@@ -130,7 +147,7 @@ PAC_ON_KW = 1.0             # เฟรมที่ถือว่า "จ่า
 # วันปกติทุกเครื่องหลุดสั้น ๆ รวม 40–90 นาที/วัน · #10 หลุดนาน 160–450 นาทีในวันที่ "หยุดกลางวัน" · 9 ต.ค. 12:43 หลุดทั้งระบบ
 METER_LOST_STATUS = "Static"
 STATIC_NODE_MIN = 120       # เครื่องเดียวไม่ได้รับค่ามิเตอร์ ≥ 2 ชม./วัน ขณะเครื่องอื่นปกติ = โหนด RS485 ของเครื่องนั้น
-STATIC_SYSTEM_MIN = 240     # กลุ่มที่ไม่จ่ายไฟมี Static ≥ 4 ชม./วัน = ลิงก์มิเตอร์หลุดทั้งระบบ (สาเหตุของการหยุด)
+STATIC_SYSTEM_MIN = 180     # Static ≥ 3 ชม./วัน (วันปกติไม่เกิน ~135) ในเครื่องเกินครึ่ง = ลิงก์มิเตอร์หลุดทั้งระบบ
 COVERAGE_ALERT = 40.0       # เครื่องส่งข้อมูลน้อยกว่า 40% ของเครื่องที่ครบที่สุดในวันนั้น
 EFF_MIN_COVERAGE = 80.0     # คิดประสิทธิภาพ DC→AC เฉพาะวันที่ข้อมูลครบ ≥ 80%
 EFF_MIN_MID_FRAMES = 40     # และมีเฟรมช่วงแดดเต็ม (10–14 น.) อย่างน้อยเท่านี้ (วันปกติ 75–216)
@@ -913,6 +930,21 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
                                 + (f"เครื่องที่ยังผลิตอยู่: {ok_tags} · " if ok_tags else "")
                                 + f"ผลผลิตที่หายไปราว {lost:,.0f} kWh (ถ้าได้เท่าเครื่องที่ผลิตอยู่) · " + cause})
 
+    # ลิงก์มิเตอร์หลุดทั้งระบบเกือบทั้งวัน (เครื่องเกินครึ่ง Static ≥ STATIC_SYSTEM_MIN) ในวันที่ยังไม่ถูกรวมในรายการ
+    # "ไม่จ่ายไฟทั้งวัน" ด้านบน — เช่น 09/10 (หลุด 12:43 ครึ่งวัน) และ 14/10 (กลับมาราว 14:00 ผลิตได้แค่ ~40 kWh/เครื่อง)
+    if "static_min" in daily.columns:
+        zcnt = daily.groupby("date")["zero_day"].sum() if "zero_day" in daily.columns else pd.Series(dtype=int)
+        scnt = daily[daily["static_min"] >= STATIC_SYSTEM_MIN].groupby("date")["sn"].nunique()
+        scnt = scnt[(scnt >= N_INVERTERS // 2) & (zcnt.reindex(scnt.index).fillna(0) < N_INVERTERS // 2)]
+        if not scnt.empty:
+            lst = ", ".join(f"{fmt_d(d)} ({n} เครื่อง เฉลี่ย {daily.loc[daily['date'] == d, 'static_min'].median():,.0f} นาที)"
+                            for d, n in scnt.items())
+            out.append({"level": "error", "inv_no": 0,
+                        "text": f"ลิงก์มิเตอร์ Zero-export หลุดนานทั้งระบบ (Grid Status = Static ≥ {STATIC_SYSTEM_MIN // 60} ชม. "
+                                f"ปกติ 40–90 นาที/วัน) {len(scnt)} วัน — {lst} · เครื่องกลุ่ม #1–#5, #7–#10 จ่าย 0 W "
+                                "ระหว่างที่ไม่ได้ค่าจากมิเตอร์ (fail-safe) ผลผลิตวันนั้นจึงต่ำ — ตรวจสาย RS485/ขั้วต่อ/"
+                                "ตัวควบคุม Zero-export และตัวมิเตอร์"})
+
     # โหนดมิเตอร์ของเครื่องเดียวหลุดนาน ขณะเครื่องอื่นปกติ และเครื่องหยุดจ่ายไฟจริงในวันนั้น — อธิบาย "หยุดจ่ายไฟ
     # กลางวัน" ของ #10 (8 วันใน ก.ย.–ต.ค. 69) · ต้องมีหลักฐานว่าหยุดด้วย: #11 มี Static มากกว่าเครื่องอื่นเป็นปกติ
     # (50–130 นาที/วัน) แต่ไม่เคยหยุด ถ้าดูแค่นาที Static จะฟ้อง #11 ผิด
@@ -931,16 +963,21 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
     # เครื่องที่ "ไม่มีแถวเลย" ไม่อยู่ใน summ — ต้องเทียบกับรายการ 11 ตัวเอง ไม่งั้นหายเงียบ
     # (logger หลุด / ปิดเครื่อง / ลืม export ไฟล์ของเครื่องนั้น) ทั้งที่ผลผลิตหายไปทั้งเครื่อง
     dates = sorted(daily["date"].unique())
-    for sn, no in sorted(INVERTER_NO.items(), key=lambda kv: kv[1]):
+    for sn, no in sorted(INVERTER_NO.items(), key=lambda kv: (kv[1], kv[0])):
+        exp = [d for d in dates if sn in expected_sns(d)]   # เครื่องที่ถูกเปลี่ยน/เพิ่งติดตั้ง คาดหวังเฉพาะช่วงของมัน
+        if not exp:
+            continue
         g_sn = daily[daily["sn"] == sn]
         # "มีข้อมูล" = วันที่สรุปยอด AC ได้ (ac_kwh ไม่ว่าง) — วันที่ logger ส่งแต่กลางคืนและ Eday = 0
         # (#6 02/10, 05/10) ถูกตั้งเป็นว่างใน summarize() จึงนับว่าไม่มีข้อมูล · วันที่ใช้ Ecum แทนได้ (03/10) ยังนับว่ามี
         have = set(g_sn.loc[g_sn["ac_kwh"].notna(), "date"])
-        gone = [d for d in dates if d not in have]
+        gone = [d for d in exp if d not in have]
         if not have:
+            note = ((f" (เครื่องนี้ถูกเปลี่ยนเป็น SN {REPLACED[sn][0]} เมื่อ {fmt_d(REPLACED[sn][1])} แล้ว — "
+                     "ก่อนหน้านั้น logger ไม่ส่งข้อมูล)") if sn in REPLACED else
+                    " — ตรวจว่าเครื่องทำงาน/logger ส่งข้อมูล และ export จาก EVE ครบ 11 ไฟล์")
             out.append({"level": "error", "inv_no": no,
-                        "text": f"#{no} (SN {sn}) ไม่มีข้อมูลเลยในช่วงนี้ — ตรวจว่าเครื่องทำงาน/logger ส่งข้อมูล "
-                                "และ export จาก EVE ครบ 11 ไฟล์"})
+                        "text": f"#{no} (SN {sn}) ไม่มีข้อมูลเลยในช่วงนี้" + note})
         elif gone:
             out.append({"level": "error", "inv_no": no,
                         "text": f"#{no} (SN {sn}) ไม่มีข้อมูลช่วงผลิต {len(gone)} วันที่เครื่องอื่นมี — "
@@ -1229,8 +1266,8 @@ def run_update(rebuild: bool = False, check: bool = False, out=print) -> int:
     if pl is not None:
         out(f"  (วันนี้ยังไม่ครบวัน — ข้อมูลถึง {pl:%H:%M} น. แดชบอร์ดจะไม่นับวันนี้ในค่าเฉลี่ย/เป้า"
             " ดึง export ใหม่หลัง 18:30 แล้วกดอัปเดตอีกครั้งจะได้ยอดเต็มวัน)")
-    if len(ld) < N_INVERTERS:
-        lack = sorted(set(INVERTER_NO) - set(ld["sn"]), key=INVERTER_NO.get)
+    lack = sorted(expected_sns(last) - set(ld["sn"]), key=INVERTER_NO.get)
+    if lack:
         out(f"  *** วันนี้มีข้อมูลแค่ {len(ld)} จาก {N_INVERTERS} เครื่อง — ขาด "
             + ", ".join(f"#{INVERTER_NO[s]} ({s})" for s in lack) + " ***")
     for r in ld.itertuples():

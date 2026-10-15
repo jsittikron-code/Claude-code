@@ -62,6 +62,11 @@ def _fmt_date(d) -> str:
     return pd.Timestamp(d).strftime("%d/%m/%y")
 
 
+def _inv_label(inv_no, sn: str) -> str:
+    """ป้ายเครื่อง — SN เดิมของเครื่องที่ถูกเปลี่ยนแล้วได้ "#6 เดิม" ไม่งั้นสองแถวจะทับกันในตาราง/heatmap"""
+    return f"#{int(inv_no)}" + (" เดิม" if sn in se.REPLACED else "")
+
+
 def _inv_labels(daily: pd.DataFrame) -> list[str]:
     """ป้าย #1–#11 เสมอ + เครื่องใหม่ที่ระบบยังไม่รู้จัก (#12, #13, ...) ถ้ามีในข้อมูล"""
     nos = sorted(set(range(1, se.N_INVERTERS + 1)) | set(int(x) for x in daily["inv_no"].unique()))
@@ -1012,7 +1017,7 @@ def render(kpi_card) -> None:
         with st.container(border=True, key="solar_mppt_heat"):
             st.subheader(f"ราย MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่อง (%) · {md_label}")
             hm = se.mppt_table(md).rename(columns={"mppt": "MPPT"})
-            hm["เครื่อง"] = "#" + hm["inv_no"].astype(str)
+            hm["เครื่อง"] = [_inv_label(n, s) for n, s in zip(hm["inv_no"], hm["sn"])]
             # เครื่องที่ไม่จ่ายไฟทั้งวัน (วันใดวันหนึ่งในช่วง) และคำนวณ % ไม่ได้เลย → ช่อง "หยุด" ไม่ใช่ "—"
             hm["หยุด"] = hm["sn"].map(md.assign(z=_zero_flags(md)).groupby("sn")["z"].any()).fillna(False)
             st.altair_chart(_ratio_heatmap(
@@ -1042,11 +1047,12 @@ def render(kpi_card) -> None:
             if sh.empty:
                 st.info("ยังไม่มีค่ากลางวันพอสำหรับคำนวณ" + (" — เครื่องที่เหลือไม่จ่ายไฟในวันนี้" if zero_inv else ""))
             else:
-                pv = sh.pivot(index="inv_no", columns="mppt", values="vdc_mid").round(0)
+                # index = (เลขเครื่อง, SN) — เครื่องที่ถูกเปลี่ยนมี 2 SN ใต้เลขเดียว pivot ด้วยเลขอย่างเดียวจะล้ม
+                pv = sh.pivot(index=["inv_no", "sn"], columns="mppt", values="vdc_mid").round(0)
                 pv.columns = [f"MPPT {c}" for c in pv.columns]
-                pv.index = ["#" + str(i) for i in pv.index]
-                ratio = sh.pivot(index="inv_no", columns="mppt", values="ratio")
+                ratio = sh.pivot(index=["inv_no", "sn"], columns="mppt", values="ratio")
                 ratio.columns = pv.columns
+                pv.index = [_inv_label(n, s) for n, s in pv.index]
                 ratio.index = pv.index
 
                 def _paint(df_):
