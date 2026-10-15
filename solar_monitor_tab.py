@@ -62,9 +62,9 @@ def _fmt_date(d) -> str:
     return pd.Timestamp(d).strftime("%d/%m/%y")
 
 
-def _inv_label(inv_no, sn: str) -> str:
-    """ป้ายเครื่อง — SN เดิมของเครื่องที่ถูกเปลี่ยนแล้วได้ "#6 เดิม" ไม่งั้นสองแถวจะทับกันในตาราง/heatmap"""
-    return f"#{int(inv_no)}" + (" เดิม" if sn in se.REPLACED else "")
+def _inv_label(inv_no, sn: str = "") -> str:
+    """ป้ายเครื่อง #1–#11 — เครื่องที่ถูกเปลี่ยน (SN เก่า+ใหม่) เป็นเครื่องเดียวกัน solar_etl รวมให้แล้ว"""
+    return f"#{int(inv_no)}"
 
 
 def _inv_labels(daily: pd.DataFrame) -> list[str]:
@@ -952,6 +952,7 @@ def render(kpi_card) -> None:
                      "coverage_pct", "zero_days", "outage_days", "outage_min", "n_fault", "curtail_days",
                      "status", "fw"]].copy()
         show["mppt_min_ratio"] = show["mppt_min_ratio"] * 100
+        show["sn"] = summ["sn_span"]            # เครื่องที่ถูกเปลี่ยนในช่วงนี้แสดง "SN เดิม → SN ใหม่"
         show["ac_share"] = show["ac_kwh"] / show["ac_kwh"].sum() * 100
         show.insert(3, "ac_share", show.pop("ac_share"))
 
@@ -1019,7 +1020,7 @@ def render(kpi_card) -> None:
             hm = se.mppt_table(md).rename(columns={"mppt": "MPPT"})
             hm["เครื่อง"] = [_inv_label(n, s) for n, s in zip(hm["inv_no"], hm["sn"])]
             # เครื่องที่ไม่จ่ายไฟทั้งวัน (วันใดวันหนึ่งในช่วง) และคำนวณ % ไม่ได้เลย → ช่อง "หยุด" ไม่ใช่ "—"
-            hm["หยุด"] = hm["sn"].map(md.assign(z=_zero_flags(md)).groupby("sn")["z"].any()).fillna(False)
+            hm["หยุด"] = hm["inv_no"].map(md.assign(z=_zero_flags(md)).groupby("inv_no")["z"].any()).fillna(False)
             st.altair_chart(_ratio_heatmap(
                 hm, x=alt.X("MPPT:O", title="MPPT"), y=alt.Y("เครื่อง:N", sort=labels, title=None),
                 tip=["เครื่อง", "sn", "MPPT",
@@ -1070,12 +1071,13 @@ def render(kpi_card) -> None:
         st.subheader("เจาะรายเครื่อง — ราย MPPT รายวัน")
         # รายชื่อจากช่วง 14 วัน (โหมดรายวัน) — เครื่องที่ไม่มีข้อมูลวันที่เลือกต้องยังเลือกดูแนวโน้มได้
         # เพราะนั่นคือมุมที่ต้องใช้หาว่ามันหายไปตั้งแต่เมื่อไร
-        opts = (trend.groupby("sn", as_index=False)["inv_no"].first()
-                .sort_values("inv_no").reset_index(drop=True))
-        sel = st.selectbox("อินเวอร์เตอร์", opts["sn"].tolist(),
-                           format_func=lambda s: f"#{int(opts.loc[opts['sn'] == s, 'inv_no'].iloc[0])}  SN {s}",
-                           key="solar_detail_sn")
-        g = trend[trend["sn"] == sel].sort_values("date")
+        # เลือกตาม "เลขเครื่อง" (11 ตัว) ไม่ใช่ SN — เครื่องที่ถูกเปลี่ยนมี 2 SN ใต้เลขเดียว ต้องดูเป็นเส้นเดียวต่อเนื่อง
+        opts = (trend.sort_values("date").groupby("inv_no")["sn"]
+                .agg(lambda s: " → ".join(dict.fromkeys(str(x) for x in s))).reset_index().sort_values("inv_no"))
+        sel = st.selectbox("อินเวอร์เตอร์", [int(n) for n in opts["inv_no"]],
+                           format_func=lambda n: f"#{int(n)}  SN {opts.loc[opts['inv_no'] == n, 'sn'].iloc[0]}",
+                           key="solar_detail_inv")
+        g = trend[trend["inv_no"] == sel].sort_values("date")
         if single:
             st.caption(f"แสดง 14 วันถึง {_fmt_date(end)} เพื่อให้เห็นแนวโน้มรอบวันที่เลือก")
 
@@ -1131,8 +1133,9 @@ def render(kpi_card) -> None:
                 "วันที่ (ดูละเอียดทั้งวัน)", days_g, key="solar_intraday_day",
                 index=days_g.index(np.datetime64(end)) if single and np.datetime64(end) in days_g else 0,
                 format_func=lambda x: pd.Timestamp(x).strftime("%d/%m/%Y (%a)"))
-            po = prof_all[(prof_all["sn"] == sel) & (prof_all["date"] == iday) & prof_all["outage"]]["slot"]
-            no = int(opts.loc[opts["sn"] == sel, "inv_no"].iloc[0])
+            po = prof_all[(prof_all["inv_no"] == sel) & (prof_all["date"] == iday) & prof_all["outage"]]["slot"]
+            no = int(sel)
+            sn_day = str(g.loc[g["date"] == iday, "sn"].iloc[-1])      # SN ที่ใช้งานในวันนั้น (เผื่อเครื่องถูกเปลี่ยน)
             zrow = g[(g["date"] == iday) & _zero_flags(g)]
             if not zrow.empty:
                 r0 = zrow.iloc[0]
@@ -1141,7 +1144,7 @@ def render(kpi_card) -> None:
                          f"สถานะ {r0.get('status_mid', '') or 'ปกติ'} แต่ Pac = 0 และ Eday = 0"
                          + (f" · Vdc กลางวัน ~{v:,.0f} V (แรงดันเปิดวงจร = ไม่ดึงกำลังจากแผง)" if v else "")
                          + " · ไม่ใช่ข้อมูลขาด ให้ตรวจระบบจำกัดกำลัง/การตั้งค่าในเว็บ EVE และหน้าจอเครื่อง")
-            _intraday(_readings(sig, iday, sel), pd.Timestamp(iday), po, inv_label=f"#{no} · SN {sel}")
+            _intraday(_readings(sig, iday, sn_day), pd.Timestamp(iday), po, inv_label=f"#{no} · SN {sn_day}")
 
         det = g[["date", "ac_kwh", "dc_kwh", "eff_pct"] + se.E_COLS + ["pac_max", "pdc_max",
                  "coverage_pct", "outage_min", "curtail_min", "n_fault", "t_heatsink_max"]
@@ -1174,13 +1177,15 @@ def render(kpi_card) -> None:
         exp = st.expander(f"ข้อมูลดิบของเครื่องนี้ วันที่ {_fmt_date(raw_day)} (ทุก ~65 วินาที)", on_change="rerun")
         if exp.open:
             with exp:
-                raw = _readings(sig, raw_day, sel)
+                hit = g.loc[g["date"] == raw_day, "sn"]
+                raw_sn = str(hit.iloc[-1]) if len(hit) else se.unit_sn(g)
+                raw = _readings(sig, raw_day, raw_sn)
                 cols = ["ts", "status", "grid_status", "pac_kw", "pdc_kw", "eday_kwh", "ecum_kwh"] + \
                        [f"vdc{i}" for i in se.MPPT] + [f"idc{i}" for i in se.MPPT] + [f"pdc{i}" for i in se.MPPT] + \
                        ["vac_r", "vac_s", "vac_t", "iac_r", "iac_s", "iac_t", "hz", "t_heatsink", "flag"]
                 st.dataframe(raw[[c for c in cols if c in raw.columns]], hide_index=True, width="stretch", height=360)
                 st.download_button("⬇️ ดาวน์โหลด CSV — ข้อมูลดิบวันนี้", raw.to_csv(index=False).encode("utf-8-sig"),
-                                   file_name=f"solar_raw_{sel}_{pd.Timestamp(raw_day):%Y%m%d}.csv", mime="text/csv",
+                                   file_name=f"solar_raw_{raw_sn}_{pd.Timestamp(raw_day):%Y%m%d}.csv", mime="text/csv",
                                    key="solar_dl_raw")
 
     # ---- แจ้งเตือน ----

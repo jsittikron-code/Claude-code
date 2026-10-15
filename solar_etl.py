@@ -585,6 +585,9 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     for c in PHASES.values():
         agg[f"{c}_max"] = (c, "max")
     daily = valid.groupby(["sn", "date"], as_index=False).agg(**agg)
+    # เลขเครื่องตั้งแต่ต้น — ทุกอย่างที่เป็น "ต่อเครื่อง" (จำนวนสตริง ตารางสรุป MPPT) ต้องรวม SN เก่า+ใหม่ของ
+    # เครื่องที่ถูกเปลี่ยน (ดู REPLACED) เป็นเครื่องเดียว ระบบมี 11 เครื่องเสมอ
+    daily["inv_no"] = daily["sn"].map(nums).astype("int16")
     daily["ecum_delta"] = daily["ecum_max"] - daily["ecum_min"]
     daily["ac_eday"] = daily["ac_kwh"]
     use_ecum = (daily["ecum_delta"].between(0, ECUM_DAY_MAX_KWH)
@@ -643,10 +646,11 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     idc_mid = daily[[f"idc{i}_mid" for i in MPPT]]
     share = idc_mid.div(idc_mid.max(axis=1), axis=0)
     share.columns = [f"s{i}" for i in MPPT]
-    base = pd.concat([daily[["sn"]], share], axis=1).groupby("sn").quantile(0.9)
+    # ต่อ "เครื่อง" ไม่ใช่ต่อ SN — สตริงเป็นฝั่งแผง เปลี่ยนอินเวอร์เตอร์แล้วสตริงเดิม (#6 ใหม่มีข้อมูลวันเดียว อนุมานเองไม่ได้)
+    base = pd.concat([daily[["inv_no"]], share], axis=1).groupby("inv_no").quantile(0.9)
     for i in MPPT:
         nstr = (base[f"s{i}"] >= STRINGS_2_RATIO).map({True: 2, False: 1})
-        daily[f"nstr{i}"] = daily["sn"].map(nstr).fillna(1).astype("int8")
+        daily[f"nstr{i}"] = daily["inv_no"].map(nstr).fillna(1).astype("int8")
 
     # เฟรม fault นับจากทุกแถว (รวมเฟรมเสียที่ถูกล้างค่า)
     # นับเฉพาะเฟรมที่ไม่ใช่เฟรมเสีย — เฟรมเสีย (status 10000) เป็นข้อมูลขยะจาก logger ไม่ใช่เครื่อง fault
@@ -691,9 +695,18 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     daily = daily.merge(ev.reset_index(), on=["sn", "date"], how="left")
     daily[["outage_min", "curtail_min"]] = daily[["outage_min", "curtail_min"]].fillna(0).astype("int32")
 
-    daily["inv_no"] = daily["sn"].map(nums).astype("int16")
     daily = daily.sort_values(["date", "inv_no"]).reset_index(drop=True)
     return daily, prof
+
+
+def unit_sn(g: pd.DataFrame) -> str:
+    """SN ปัจจุบันของเครื่อง (แถววันล่าสุด) — เครื่องที่ถูกเปลี่ยนมี 2 SN ใต้เลขเดียว"""
+    return str(g.sort_values("date")["sn"].iloc[-1])
+
+
+def sn_span(g: pd.DataFrame) -> str:
+    """SN ทั้งหมดของเครื่องในช่วงนั้น เรียงตามเวลา เช่น "2205059057 → 2301130562" """
+    return " → ".join(dict.fromkeys(str(s) for s in g.sort_values("date")["sn"]))
 
 
 def write_summaries(daily: pd.DataFrame, prof: pd.DataFrame) -> None:
@@ -758,8 +771,8 @@ def mppt_table(daily: pd.DataFrame) -> pd.DataFrame:
     if daily.empty:
         return pd.DataFrame()
     recs = []
-    for sn, g_all in daily.groupby("sn"):
-        no = int(g_all["inv_no"].iloc[0])
+    for no, g_all in daily.groupby("inv_no"):      # ต่อเครื่อง — SN เก่า+ใหม่ของเครื่องที่ถูกเปลี่ยนรวมกัน
+        no, sn = int(no), unit_sn(g_all)
         # ใช้เฉพาะวันที่ข้อมูลช่วงแดดเต็มพอ (ดู MPPT_MIN_MID_FRAMES) — ไม่มีเลยในช่วงนี้ = ค่าว่างทุก MPPT (ช่องเทา)
         ok = (g_all["n_mid"] >= MPPT_MIN_MID_FRAMES) if "n_mid" in g_all.columns \
             else g_all[[f"vdc{i}_mid" for i in MPPT]].notna().any(axis=1)
@@ -773,7 +786,7 @@ def mppt_table(daily: pd.DataFrame) -> pd.DataFrame:
         idc = g[[f"idc{i}_mid" for i in MPPT]].median()
         vdc = g[[f"vdc{i}_mid" for i in MPPT]].median()
         if all(f"nstr{i}" in g.columns for i in MPPT):    # จำนวนสตริงจากประวัติทั้งหมด (summarize)
-            n_str = pd.Series({i: int(g[f"nstr{i}"].iloc[0]) for i in MPPT})
+            n_str = pd.Series({i: int(g[f"nstr{i}"].mode().iloc[0]) for i in MPPT})
         else:                                               # parquet รุ่นเก่า — อนุมานจากช่วงนี้
             idc_max = idc.max()
             n_str = pd.Series({i: (2 if idc[f"idc{i}_mid"] >= STRINGS_2_RATIO * idc_max else 1)
@@ -812,11 +825,12 @@ def inverter_summary(daily: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     mt = mppt_table(daily)
     rows = []
-    for sn, g in daily.groupby("sn"):
+    for no, g in daily.groupby("inv_no"):          # ต่อเครื่อง (11 แถวเสมอ) — SN เก่า+ใหม่รวมกัน
+        no, sn = int(no), unit_sn(g)
         days = int(g["ac_kwh"].notna().sum())        # นับเฉพาะวันที่มีข้อมูลจริง (วัน NaN = logger ไม่ส่ง)
         zd = g["zero_day"] if "zero_day" in g.columns else pd.Series(False, index=g.index)
         ac, dc = g["ac_kwh"].sum(), g["dc_kwh"].sum()
-        m = mt[mt["sn"] == sn].set_index("mppt")
+        m = mt[mt["inv_no"] == no].set_index("mppt")
         # เครื่องที่ DC เป็น 0 ทั้งช่วง (ปลดวงจรซ่อม / เพิ่งกลับมา) ratio เป็นค่าว่างทั้งหมด
         # idxmax() บนค่าว่างล้วนจะ error แล้วพาทั้งแท็บพัง จึงต้องกันไว้
         if m["ratio"].notna().any():
@@ -831,7 +845,7 @@ def inverter_summary(daily: pd.DataFrame) -> pd.DataFrame:
         ok = g["eff_pct"].notna()
         ac_e, dc_e = g.loc[ok, "ac_kwh"].sum(), g.loc[ok, "dc_kwh"].sum()
         rows.append({
-            "inv_no": int(g["inv_no"].iloc[0]), "sn": sn, "days": days,
+            "inv_no": no, "sn": sn, "sn_span": sn_span(g), "days": days,
             "ac_kwh": ac, "avg_kwh": ac / days if days else np.nan,
             "best_kwh": best["ac_kwh"], "best_date": best["date"],
             "worst_kwh": worst["ac_kwh"], "worst_date": worst["date"],
@@ -887,15 +901,15 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
     zd = daily[daily["zero_day"]] if "zero_day" in daily.columns else daily.iloc[0:0]
     if not zd.empty:
         groups: dict[tuple, list] = {}
-        for sn, g in zd.groupby("sn"):
-            groups.setdefault(tuple(sorted(g["date"])), []).append((int(g["inv_no"].iloc[0]), sn))
+        for no, g in zd.groupby("inv_no"):
+            groups.setdefault(tuple(sorted(g["date"])), []).append((int(no), unit_sn(g)))
         for ds, members in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
             members.sort()
             nos, sns = [n for n, _ in members], [s for _, s in members]
             tags = ", ".join(f"#{n}" for n in nos)
             # เริ่มหยุดเมื่อไร = เวลาสุดท้ายที่จ่ายไฟในวันก่อนหน้าวันแรกที่เป็น 0 (ถ้าวันนั้นอยู่ในช่วงที่ดู)
             since = ""
-            prev = daily[daily["sn"].isin(sns) & (daily["date"] < ds[0])]
+            prev = daily[daily["inv_no"].isin(nos) & (daily["date"] < ds[0])]
             if not prev.empty and "last_on_ts" in prev.columns:
                 t = prev[prev["date"] == prev["date"].max()]["last_on_ts"].dropna()
                 if not t.empty:
@@ -907,7 +921,7 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
             prod = daily[daily["date"].isin(ds) & (daily["ac_kwh"] >= ZERO_DAY_REF_KWH)]
             lost = float(prod.groupby("date")["ac_kwh"].median().reindex(list(ds)).fillna(0).sum()) * len(sns)
             ok_tags = ", ".join(f"#{int(n)}" for n in sorted(prod["inv_no"].unique()))
-            z = zd[zd["sn"].isin(sns)]
+            z = zd[zd["inv_no"].isin(nos)]
             vdc = z["vdc_mid_all"].median() if "vdc_mid_all" in z.columns else np.nan
             st_txt = z["status_mid"].mode().iloc[0] if "status_mid" in z.columns and not z["status_mid"].mode().empty else ""
             days_txt = (f"{fmt_d(ds[0])}–{fmt_d(ds[-1])}" if len(ds) > 1 and (pd.Timestamp(ds[-1]) - pd.Timestamp(ds[0])).days == len(ds) - 1
@@ -951,8 +965,8 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
     if "static_min" in daily.columns:
         med = daily.groupby("date")["static_min"].transform("median")
         node = daily[(daily["static_min"] >= STATIC_NODE_MIN) & (med < STATIC_NODE_MIN) & (daily["outage_min"] >= 15)]
-        for sn, g in node.groupby("sn"):
-            no = int(g["inv_no"].iloc[0])
+        for no, g in node.groupby("inv_no"):
+            no, sn = int(no), unit_sn(g)
             lst = ", ".join(f"{fmt_d(x.date)} {int(x.static_min)} นาที" for x in g.sort_values("date").itertuples())
             out.append({"level": "warning", "inv_no": no,
                         "text": f"#{no} (SN {sn}) ไม่ได้รับค่าจากมิเตอร์ Zero-export (Grid Status = Static) นานผิดปกติ "
@@ -987,7 +1001,7 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
     for _, r in summ.iterrows():
         tag = f"#{r['inv_no']} (SN {r['sn']})"
         if r["outage_days"] > 0:
-            days = daily[(daily["sn"] == r["sn"]) & (daily["outage_min"] > 0)]
+            days = daily[(daily["inv_no"] == r["inv_no"]) & (daily["outage_min"] > 0)]
             lst = ", ".join(f"{fmt_d(x.date)} {int(x.outage_min)} นาที" for x in days.itertuples())
             out.append({"level": "error", "inv_no": r["inv_no"],
                         "text": f"{tag} หยุดจ่ายไฟกลางวันขณะเครื่องอื่นผลิตอยู่ {r['outage_days']} วัน "
@@ -999,7 +1013,7 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
         # ดูจาก ratio ตรง ๆ ไม่ใช่จากคอลัมน์ status (สถานะ "ไม่จ่ายไฟ" มาก่อน แต่ MPPT ที่ตกในวันอื่นยังต้องแจ้ง)
         if pd.notna(r["mppt_min_ratio"]) and r["mppt_min_ratio"] < 1 - MPPT_ALERT:
             # แจ้งทุก MPPT ที่ต่ำกว่าเกณฑ์ ไม่ใช่แค่ตัวแย่สุด (#6 MPPT 5 ที่ 56% เคยถูกข้ามเพราะ MPPT 6 แย่กว่า)
-            low = mt[(mt["sn"] == r["sn"]) & (mt["ratio"] < 1 - MPPT_ALERT)].sort_values("ratio")
+            low = mt[(mt["inv_no"] == r["inv_no"]) & (mt["ratio"] < 1 - MPPT_ALERT)].sort_values("ratio")
             lst = ", ".join(f"MPPT {int(x.mppt)} {x.ratio*100:.0f}%" for x in low.itertuples())
             out.append({"level": "warning", "inv_no": r["inv_no"],
                         "text": f"{tag} พลังงานต่อสตริงต่ำกว่าค่าเฉลี่ยในเครื่อง (เกณฑ์ {100*(1-MPPT_ALERT):.0f}%): {lst} — "
