@@ -641,12 +641,16 @@ with st.sidebar:
         ok_lines.append(f"✓ มิเตอร์ย่อย {n_sub} จุด + Solar {n_sol} ชุด")
     if production is not None:
         ok_lines.append("✓ ผลผลิต (OEE)")
-    solar_last = solar_monitor_tab.last_date(data_paths.solar_signature())
-    if solar_last is not None:
-        ok_lines.append(f"✓ Solar inverter ถึง {solar_last:%d/%m/%Y}")
+    solar_stat = solar_monitor_tab.last_day_status(data_paths.solar_signature())
+    if solar_stat is not None:
+        ok_lines.append(f"✓ Solar inverter ถึง {solar_stat['date']:%d/%m/%Y}")
     else:
         load_errors.append("Solar inverter: ยังไม่มี parquet — ดึง EVE export แล้วกด อัปเดต Solar.bat")
     st.success("\n\n".join(ok_lines))
+    # เครื่องที่ออนไลน์แต่ไม่จ่ายไฟทั้งวัน — ต้องเห็นตั้งแต่แถบด้านข้าง ไม่ใช่รอเข้าแท็บ Solar Monitor
+    if solar_stat and solar_stat["n_zero"]:
+        st.error(f"⚠ Solar {solar_stat['date']:%d/%m}: จ่ายไฟแค่ {solar_stat['n_on']}/{solar_monitor_tab.se.N_INVERTERS} เครื่อง "
+                 f"— {solar_stat['n_zero']} เครื่องออนไลน์แต่ไม่จ่ายไฟทั้งวัน (ดูแท็บ Solar Monitor)")
     if load_errors:
         st.warning("อ่านไม่ได้บางส่วน:\n\n" + "\n".join(f"- {e}" for e in load_errors))
     if st.button("🔄 โหลดข้อมูลใหม่", help="ล้าง cache แล้วอ่านไฟล์จากดิสก์ใหม่ทันที"):

@@ -115,6 +115,22 @@ OUTAGE_PAC_KW = 0.2         # เครื่องนี้ไม่จ่า�
 OUTAGE_SYSTEM_KW = 10.0     # ... ขณะที่ค่ากลางของเครื่องอื่นยังผลิตอยู่
 CURTAIL_PAC_KW = 20.0       # ผลิตต่ำ ...
 CURTAIL_VDC = 800.0         # ... ทั้งที่ Vdc ลอยสูง = อินเวอร์เตอร์ถอยออกจาก MPP เอง
+# "ออนไลน์แต่ไม่จ่ายไฟทั้งวัน" — logger ส่งเฟรมช่วงแดดเต็มครบตามปกติ สถานะ Grid connected ไฟกริดมี
+# แต่ Eday = 0 ทั้งวัน ขณะที่เครื่องอื่นผลิตได้ (9 ต.ค. 69 12:43 #1–#5, #7–#10 หยุดพร้อมกันภายใน 2 นาที
+# แล้วไม่กลับมาอีก 4 วัน — Vdc ลอย ~850 V = อินเวอร์เตอร์ไม่ดึงกำลังจากแผง ถูกจำกัดกำลังเป็น 0 หรือถูกสั่งหยุด)
+# ต้องแยกจาก "ไม่มีข้อมูล" (ช่องเทา) และจาก Zero-export ชั่วคราววันโหลดต่ำ (เครื่องยังผลิตได้บ้าง)
+# ไม่งั้นแดชบอร์ดดูเหมือน "ข้อมูลขาดช่วง" ทั้งที่ผลผลิตหายไปวันละ ~3,000 kWh และไม่มีใครรู้
+ZERO_DAY_MIN_MID_ROWS = 60  # เฟรม 10–14 น. ทุกเฟรม (ไม่ดูว่าผลิตไหม) อย่างน้อยเท่านี้ = เครื่อง/logger ออนไลน์ (ปกติ ~200)
+ZERO_DAY_AC_KWH = 1.0       # ผลผลิตทั้งวันต่ำกว่านี้ = ไม่จ่ายไฟทั้งวัน
+ZERO_DAY_REF_KWH = 50.0     # เครื่องที่ผลิตได้มากสุดในวันนั้นต้องได้อย่างน้อยเท่านี้ (มีแดดจริง ไม่ใช่ฝนตก/ไฟดับทั้งระบบ)
+PAC_ON_KW = 1.0             # เฟรมที่ถือว่า "จ่ายไฟอยู่" — ใช้หาเวลาสุดท้ายที่เครื่องจ่ายไฟก่อนหยุด
+# ลิงก์มิเตอร์ Zero-export: คอลัมน์ Grid Status ของ EVE = "Purchasing energy" เมื่ออินเวอร์เตอร์ได้ค่าจากมิเตอร์
+# และ "Static" เมื่อไม่ได้ (RS485 มิเตอร์→ตัวควบคุม→อินเวอร์เตอร์หลุด) — เครื่องกลุ่ม #1–#5, #7–#10 ตั้ง fail-safe
+# จ่าย 0 W ระหว่างนั้น (ตรวจทั้งประวัติ 9 ก.ย.–13 ต.ค. 69: P(Pac=0 | Static) = 0.85 เทียบ 0.03 ตอนปกติ) ส่วน #11 ไม่หยุด
+# วันปกติทุกเครื่องหลุดสั้น ๆ รวม 40–90 นาที/วัน · #10 หลุดนาน 160–450 นาทีในวันที่ "หยุดกลางวัน" · 9 ต.ค. 12:43 หลุดทั้งระบบ
+METER_LOST_STATUS = "Static"
+STATIC_NODE_MIN = 120       # เครื่องเดียวไม่ได้รับค่ามิเตอร์ ≥ 2 ชม./วัน ขณะเครื่องอื่นปกติ = โหนด RS485 ของเครื่องนั้น
+STATIC_SYSTEM_MIN = 240     # กลุ่มที่ไม่จ่ายไฟมี Static ≥ 4 ชม./วัน = ลิงก์มิเตอร์หลุดทั้งระบบ (สาเหตุของการหยุด)
 COVERAGE_ALERT = 40.0       # เครื่องส่งข้อมูลน้อยกว่า 40% ของเครื่องที่ครบที่สุดในวันนั้น
 EFF_MIN_COVERAGE = 80.0     # คิดประสิทธิภาพ DC→AC เฉพาะวันที่ข้อมูลครบ ≥ 80%
 EFF_MIN_MID_FRAMES = 40     # และมีเฟรมช่วงแดดเต็ม (10–14 น.) อย่างน้อยเท่านี้ (วันปกติ 75–216)
@@ -293,6 +309,15 @@ def list_raw_files() -> list[str]:
     return sorted(out, key=_file_order)
 
 
+def _header_row(rows: list, scan: int = 20) -> int | None:
+    """ดัชนีแถวหัวตาราง = แถวแรก (ใน scan แถวแรก) ที่มี "หมายเลขอนุกรม" — ปกติคือแถว 0
+    แต่ไฟล์ที่ผ่าน Excel/Power Query มีแถว Column1..Column76 แทรกไว้ข้างบน (เจอจริง 14 ต.ค. 69)"""
+    for i, r in enumerate(rows[:scan]):
+        if "หมายเลขอนุกรม" in [str(h).strip() for h in r]:
+            return i
+    return None
+
+
 def parse_file(path: str) -> pd.DataFrame:
     """อ่านไฟล์ EVE หนึ่งไฟล์ → DataFrame คอลัมน์ชื่อสั้น (ยังไม่คำนวณอะไร)"""
     from python_calamine import CalamineWorkbook   # เร็วกว่า openpyxl ~20 เท่า
@@ -302,8 +327,10 @@ def parse_file(path: str) -> pd.DataFrame:
     wb = CalamineWorkbook.from_path(path)
     rows = []
     for name in wb.sheet_names:
-        rows = wb.get_sheet_by_name(name).to_python()
-        if rows and "หมายเลขอนุกรม" in [str(h).strip() for h in rows[0]]:
+        sheet = wb.get_sheet_by_name(name).to_python()
+        hdr = _header_row(sheet)
+        if hdr is not None:
+            rows = sheet[hdr:]
             break
     if not rows:
         raise ValueError("ไม่พบชีตที่มีหัวตาราง EVE (ไฟล์ว่าง?)")
@@ -411,7 +438,12 @@ def ingest(rebuild: bool = False, dry_run: bool = False, log=print) -> dict:
 
     files = list_raw_files()
     rel = lambda p: os.path.relpath(p, data_paths.solar_raw_dir())
-    todo = [p for p in files if manifest.get(rel(p)) != _manifest_key(p)]
+    todo = [p for p in files if rel(p) not in manifest]
+    # ไฟล์ที่เคยอ่านเข้าฐานแล้วแต่ขนาด/เวลาเปลี่ยน = มีคนเปิดใน Excel/Power Query แล้วบันทึกทับ (EVE ไม่เขียนทับ
+    # ไฟล์เดิม ตัวย้ายไฟล์ก็ไม่ทับ) — ไม่อ่านซ้ำ ใช้แถวที่อ่านไว้ตอนไฟล์ยังเป็นต้นฉบับ แล้วจำฉบับใหม่ไว้
+    # ไม่งั้นฉบับที่แก้แล้วอ่านไม่ได้จะขึ้น *** ทุกรอบตลอดไป หรือถ้าอ่านได้ ค่าที่ถูกแก้จะทับค่าจริง
+    # (14 ต.ค. 69 ไฟล์ #1 ถูกแก้ตอน 15:54 หลังอ่านเข้าฐานตอน 08:01 — หัวตารางเลื่อนไปแถว 2 มีคอลัมน์สูตรแทรก)
+    changed = [p for p in files if rel(p) in manifest and manifest[rel(p)] != _manifest_key(p)]
     stats = {"files_total": len(files), "files_new": len(todo), "rows_before": 0,
              "rows_after": 0, "errors": []}
 
@@ -419,15 +451,36 @@ def ingest(rebuild: bool = False, dry_run: bool = False, log=print) -> dict:
     if os.path.exists(rd_path) and not rebuild:
         old = pd.read_parquet(rd_path)
         stats["rows_before"] = len(old)
+    for p in changed:
+        n_old = int((old["src_file"] == os.path.basename(p)).sum()) if old is not None else 0
+        stats["errors"].append(
+            f"{rel(p)} ถูกแก้ไขหลังอ่านเข้าฐานแล้ว (ขนาด/เวลาไฟล์เปลี่ยน) — ไม่อ่านซ้ำ ใช้ {n_old:,} แถวเดิมที่อ่านไว้ "
+            "· อย่าเปิดแล้วบันทึกไฟล์ในโฟลเดอร์ข้อมูลดิบ ให้ดูจากแดชบอร์ด/ดาวน์โหลด CSV แทน "
+            "(ถ้าต้องการอ่านฉบับนี้จริง ให้รัน --rebuild)")
 
+    def _save_manifest() -> None:
+        # จำเฉพาะไฟล์ที่อ่านสำเร็จ — ไฟล์ใหม่ที่พังจะถูกลองใหม่ทุกรอบจนกว่าจะอ่านได้/ถูกลบ
+        # (rebuild = เริ่มรายการใหม่ ไม่เก็บชื่อไฟล์เก่าที่ไม่มีแล้วค้างไว้)
+        m = {} if rebuild else dict(manifest)
+        for p in files:
+            if p not in todo or p in parsed_ok:
+                m[rel(p)] = _manifest_key(p)
+        tmp = man_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(m, f, ensure_ascii=False, indent=0)
+        _replace(tmp, man_path)
+
+    parsed_ok: set = set()
     if not todo:
         stats["rows_after"] = stats["rows_before"]
+        if changed and not dry_run:
+            _save_manifest()
         return stats
     if dry_run:
         stats["todo"] = [rel(p) for p in todo]
         return stats
 
-    parts, parsed_ok = [], set()
+    parts = []
     t0 = time.time()
     for p in todo:
         try:
@@ -440,6 +493,8 @@ def ingest(rebuild: bool = False, dry_run: bool = False, log=print) -> dict:
     log(f"    (อ่าน {len(parts)} ไฟล์ ใช้เวลา {time.time() - t0:.0f} วินาที)")
     if not parts:
         stats["rows_after"] = stats["rows_before"]
+        if changed:
+            _save_manifest()
         return stats
 
     new = clean(pd.concat(parts, ignore_index=True))
@@ -462,17 +517,7 @@ def ingest(rebuild: bool = False, dry_run: bool = False, log=print) -> dict:
     tmp = rd_path + ".tmp"
     new.to_parquet(tmp, engine="pyarrow", index=False)
     _replace(tmp, rd_path)
-    # จำเฉพาะไฟล์ที่อ่านสำเร็จ — ไฟล์ที่พังจะถูกลองใหม่ทุกรอบจนกว่าจะอ่านได้/ถูกลบ
-    # (rebuild = เริ่มรายการใหม่ ไม่เก็บชื่อไฟล์เก่าที่ไม่มีแล้วค้างไว้)
-    if rebuild:
-        manifest = {}
-    for p in files:
-        if p not in todo or p in parsed_ok:
-            manifest[rel(p)] = _manifest_key(p)
-    tmp = man_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, ensure_ascii=False, indent=0)
-    _replace(tmp, man_path)
+    _save_manifest()
     stats["rows_after"] = len(new)
     return stats
 
@@ -553,6 +598,23 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     mid_med["n_mid"] = m.groupby(["sn", "date"]).size()
     daily = daily.merge(mid_med.reset_index(), on=["sn", "date"], how="left")
     daily["n_mid"] = daily["n_mid"].fillna(0).astype("int32")
+    # เฟรมช่วงแดดเต็ม "ทุกเฟรม" (ไม่ดูว่าผลิตไหม) + Vdc/สถานะช่วงนั้น — ใช้แยก "ออนไลน์แต่ไม่จ่ายไฟ"
+    # ออกจาก "ไม่มีข้อมูล": เครื่องที่ถูกจำกัดกำลังเป็น 0 ส่งเฟรมครบ ~200 เฟรมแต่ n_mid (ผลิต > 20 kW) = 0
+    am = valid[valid["hour"].between(MIDDAY_HOURS[0], MIDDAY_HOURS[1] - 1)]
+    am_g = am.groupby(["sn", "date"])
+    am_s = pd.DataFrame({"n_mid_all": am_g.size(), "vdc_mid_all": am_g["vdc_mean"].median(),
+                         "status_mid": am_g["status"].agg(lambda s: s.mode().iloc[0] if not s.mode().empty else "")})
+    daily = daily.merge(am_s.reset_index(), on=["sn", "date"], how="left")
+    daily["n_mid_all"] = daily["n_mid_all"].fillna(0).astype("int32")
+    daily["status_mid"] = daily["status_mid"].fillna("")
+    # เวลาสุดท้ายที่เครื่องจ่ายไฟ (Pac ≥ PAC_ON_KW) ในวันนั้น — บอกได้ว่าหยุดกี่โมง
+    on = valid[valid["pac_kw"] >= PAC_ON_KW].groupby(["sn", "date"])["ts"].max().rename("last_on_ts")
+    daily = daily.merge(on.reset_index(), on=["sn", "date"], how="left")
+    # นาทีช่วงกลางวันที่ไม่ได้รับค่าจากมิเตอร์ Zero-export (Grid Status = Static) — ดู METER_LOST_STATUS
+    dl = valid[valid["hour"].between(DAYLIGHT_HOURS[0], DAYLIGHT_HOURS[1] - 1)]
+    sm = (dl[dl["grid_status"] == METER_LOST_STATUS].groupby(["sn", "date"])["dt_hr"].sum() * 60).rename("static_min")
+    daily = daily.merge(sm.reset_index(), on=["sn", "date"], how="left")
+    daily["static_min"] = daily["static_min"].fillna(0).round().astype("int32")
     # ความไม่สมดุลกระแส AC 3 เฟส ช่วงแดดเต็ม (ค่ากลางของทั้งวัน) — สูงผิดปกติ = เฟสใดเฟสหนึ่งมีปัญหา
     mi = m.assign(_imb=phase_imbalance(m)).groupby(["sn", "date"])["_imb"].median().rename("phase_imbal_pct")
     daily = daily.merge(mi.reset_index(), on=["sn", "date"], how="left")
@@ -597,6 +659,15 @@ def summarize(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     no_day = (daily["n_day"] < DAY_MIN_ROWS) & (daily["ac_kwh"].fillna(0) <= 0)
     daily.loc[no_day, "ac_kwh"] = np.nan
     daily.loc[no_day, "ac_src"] = "ไม่มีข้อมูล"
+
+    # ออนไลน์แต่ไม่จ่ายไฟทั้งวัน (ดู ZERO_DAY_*) — ผลผลิตเป็น 0 จริง ไม่ใช่ข้อมูลขาด จึงคง 0 kWh ไว้แต่ติดธง
+    # เทียบกับเครื่องที่ผลิตได้มากสุดในวันเดียวกัน: ถ้าทุกเครื่องเป็น 0 (ฝนทั้งวัน/ไฟดับทั้งระบบ) ไม่ติดธง
+    ref = daily.groupby("date")["ac_kwh"].transform("max")
+    daily["zero_day"] = ((daily["n_mid_all"] >= ZERO_DAY_MIN_MID_ROWS)
+                         & (daily["ac_kwh"].fillna(0) < ZERO_DAY_AC_KWH) & (ref >= ZERO_DAY_REF_KWH))
+    # วันที่ไม่จ่ายไฟ DC ที่อินทิเกรตได้ (16–75 kWh/วัน) คือ Idc ~1 A ระดับพื้นของเซนเซอร์ × Voc ~850 V
+    # ไม่ใช่พลังงานจริง (เครื่องไม่ได้ดึงกำลังจากแผง) — ให้เป็น 0 ไม่งั้นกราฟ DC ต่อ MPPT ดูเหมือนแผงผลิตแต่ AC หาย
+    daily.loc[daily["zero_day"], ["dc_kwh", *E_COLS]] = 0.0
 
     ev = (prof.groupby(["sn", "date"])[["outage", "curtail"]].sum() * 15).astype("int32")
     ev.columns = ["outage_min", "curtail_min"]
@@ -726,6 +797,7 @@ def inverter_summary(daily: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for sn, g in daily.groupby("sn"):
         days = int(g["ac_kwh"].notna().sum())        # นับเฉพาะวันที่มีข้อมูลจริง (วัน NaN = logger ไม่ส่ง)
+        zd = g["zero_day"] if "zero_day" in g.columns else pd.Series(False, index=g.index)
         ac, dc = g["ac_kwh"].sum(), g["dc_kwh"].sum()
         m = mt[mt["sn"] == sn].set_index("mppt")
         # เครื่องที่ DC เป็น 0 ทั้งช่วง (ปลดวงจรซ่อม / เพิ่งกลับมา) ratio เป็นค่าว่างทั้งหมด
@@ -756,14 +828,20 @@ def inverter_summary(daily: pd.DataFrame) -> pd.DataFrame:
             "coverage_pct": g["coverage_pct"].mean(),
             "outage_min": int(g["outage_min"].sum()),
             "outage_days": int((g["outage_min"] > 0).sum()),
-            "curtail_days": int((g["curtail_min"] >= 60).sum()),
+            # วันที่ไม่จ่ายไฟทั้งวันไม่นับเป็น "ถูกจำกัดกำลัง" (Zero-export ชั่วคราว) — เป็นคนละเรื่อง
+            "curtail_days": int(((g["curtail_min"] >= 60) & ~zd).sum()),
+            "zero_days": int(zd.sum()),
+            # วันที่ลิงก์มิเตอร์หลุดนานจนเครื่องหยุดจ่ายไฟ (หยุดกลางวัน ≥ 15 นาที หรือไม่จ่ายไฟทั้งวัน)
+            "static_days": int(((g["static_min"] >= STATIC_NODE_MIN) & ((g["outage_min"] >= 15) | zd)).sum())
+            if "static_min" in g.columns else 0,
             "n_fault": int(g["n_fault"].sum()),
             "fw": g["fw"].iloc[-1],
         })
     out = pd.DataFrame(rows).sort_values("inv_no").reset_index(drop=True)
     out["status"] = np.select(
-        [out["mppt_min_ratio"].isna(), out["mppt_min_ratio"] < 1 - MPPT_ALERT],
-        ["ไม่มีข้อมูล DC", "ตรวจสอบ MPPT " + out["mppt_worst"].astype(str)], "ปกติ")
+        [out["zero_days"] > 0, out["mppt_min_ratio"].isna(), out["mppt_min_ratio"] < 1 - MPPT_ALERT],
+        ["ไม่จ่ายไฟ " + out["zero_days"].astype(str) + " วัน", "ไม่มีข้อมูล DC",
+         "ตรวจสอบ MPPT " + out["mppt_worst"].astype(str)], "ปกติ")
     return out
 
 
@@ -786,6 +864,69 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
     summ = inverter_summary(daily)
     mt = mppt_table(daily)
     fmt_d = lambda s: pd.Timestamp(s).strftime("%d/%m")
+
+    # ออนไลน์แต่ไม่จ่ายไฟทั้งวัน — เครื่องที่หยุดวันเดียวกันรวมเป็นรายการเดียว (9 เครื่องพร้อมกัน = ระบบควบคุม/
+    # การตั้งค่า ไม่ใช่เครื่องเสียทีละตัว) ขึ้นก่อนทุกรายการ เพราะผลผลิตหายวันละ ~300 kWh ต่อเครื่อง
+    zd = daily[daily["zero_day"]] if "zero_day" in daily.columns else daily.iloc[0:0]
+    if not zd.empty:
+        groups: dict[tuple, list] = {}
+        for sn, g in zd.groupby("sn"):
+            groups.setdefault(tuple(sorted(g["date"])), []).append((int(g["inv_no"].iloc[0]), sn))
+        for ds, members in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            members.sort()
+            nos, sns = [n for n, _ in members], [s for _, s in members]
+            tags = ", ".join(f"#{n}" for n in nos)
+            # เริ่มหยุดเมื่อไร = เวลาสุดท้ายที่จ่ายไฟในวันก่อนหน้าวันแรกที่เป็น 0 (ถ้าวันนั้นอยู่ในช่วงที่ดู)
+            since = ""
+            prev = daily[daily["sn"].isin(sns) & (daily["date"] < ds[0])]
+            if not prev.empty and "last_on_ts" in prev.columns:
+                t = prev[prev["date"] == prev["date"].max()]["last_on_ts"].dropna()
+                if not t.empty:
+                    lo, hi = t.min(), t.max()
+                    together = (hi - lo) <= pd.Timedelta(minutes=5)
+                    since = (f" · หยุดตั้งแต่ {lo:%d/%m %H:%M}" + ("" if together else f"–{hi:%H:%M}")
+                             + (" พร้อมกัน" if together and len(sns) > 1 else ""))
+            # ที่หายไป ≈ ถ้าผลิตได้เท่าค่ากลางของเครื่องที่ยังผลิตอยู่ในวันเดียวกัน (ประมาณการ ไม่ใช่มิเตอร์)
+            prod = daily[daily["date"].isin(ds) & (daily["ac_kwh"] >= ZERO_DAY_REF_KWH)]
+            lost = float(prod.groupby("date")["ac_kwh"].median().reindex(list(ds)).fillna(0).sum()) * len(sns)
+            ok_tags = ", ".join(f"#{int(n)}" for n in sorted(prod["inv_no"].unique()))
+            z = zd[zd["sn"].isin(sns)]
+            vdc = z["vdc_mid_all"].median() if "vdc_mid_all" in z.columns else np.nan
+            st_txt = z["status_mid"].mode().iloc[0] if "status_mid" in z.columns and not z["status_mid"].mode().empty else ""
+            days_txt = (f"{fmt_d(ds[0])}–{fmt_d(ds[-1])}" if len(ds) > 1 and (pd.Timestamp(ds[-1]) - pd.Timestamp(ds[0])).days == len(ds) - 1
+                        else ", ".join(fmt_d(d) for d in ds))
+            # สาเหตุที่ชี้ได้จากข้อมูล: ไม่ได้รับค่าจากมิเตอร์ Zero-export ตลอดวัน → fail-safe จ่าย 0 W
+            static_med = z["static_min"].median() if "static_min" in z.columns else 0
+            if static_med >= STATIC_SYSTEM_MIN:
+                cause = (f"สาเหตุ: อินเวอร์เตอร์ไม่ได้รับค่าจากมิเตอร์ Zero-export ตลอดวัน (Grid Status = Static "
+                         f"~{static_med:,.0f} นาที/วัน ปกติ 40–90) เครื่องกลุ่มนี้ตั้ง fail-safe จ่าย 0 W เมื่อขาดมิเตอร์ — "
+                         "ให้ตรวจสาย RS485/ขั้วต่อ/ตัวควบคุม Zero-export และตัวมิเตอร์ก่อน แล้วค่อยดูค่า Active Power Limit "
+                         "ในเว็บ EVE และหน้าจออินเวอร์เตอร์ (ลิงก์กลับมาเมื่อไร เครื่องจะกลับมาจ่ายไฟเองใน ~1–2 นาที)")
+            else:
+                cause = ("ตรวจระบบจำกัดกำลัง Zero-export (ตัวควบคุม/มิเตอร์/CT) ค่า Active Power Limit "
+                         "หรือคำสั่งหยุดเครื่องในเว็บ EVE และหน้าจออินเวอร์เตอร์")
+            out.append({"level": "error", "inv_no": 0 if len(sns) > 1 else nos[0], "inv_nos": nos,
+                        "text": f"{tags} ออนไลน์แต่ไม่จ่ายไฟทั้งวัน {len(ds)} วัน ({days_txt}){since} — "
+                                f"logger ส่งข้อมูลครบ สถานะ {st_txt or 'ปกติ'} ไฟกริดมี"
+                                + (f" แต่ Vdc ลอยที่ ~{vdc:,.0f} V (เปิดวงจร)" if pd.notna(vdc) else "")
+                                + " = อินเวอร์เตอร์ไม่ดึงกำลังจากแผง **ไม่ใช่ข้อมูลขาด** · "
+                                + (f"เครื่องที่ยังผลิตอยู่: {ok_tags} · " if ok_tags else "")
+                                + f"ผลผลิตที่หายไปราว {lost:,.0f} kWh (ถ้าได้เท่าเครื่องที่ผลิตอยู่) · " + cause})
+
+    # โหนดมิเตอร์ของเครื่องเดียวหลุดนาน ขณะเครื่องอื่นปกติ และเครื่องหยุดจ่ายไฟจริงในวันนั้น — อธิบาย "หยุดจ่ายไฟ
+    # กลางวัน" ของ #10 (8 วันใน ก.ย.–ต.ค. 69) · ต้องมีหลักฐานว่าหยุดด้วย: #11 มี Static มากกว่าเครื่องอื่นเป็นปกติ
+    # (50–130 นาที/วัน) แต่ไม่เคยหยุด ถ้าดูแค่นาที Static จะฟ้อง #11 ผิด
+    if "static_min" in daily.columns:
+        med = daily.groupby("date")["static_min"].transform("median")
+        node = daily[(daily["static_min"] >= STATIC_NODE_MIN) & (med < STATIC_NODE_MIN) & (daily["outage_min"] >= 15)]
+        for sn, g in node.groupby("sn"):
+            no = int(g["inv_no"].iloc[0])
+            lst = ", ".join(f"{fmt_d(x.date)} {int(x.static_min)} นาที" for x in g.sort_values("date").itertuples())
+            out.append({"level": "warning", "inv_no": no,
+                        "text": f"#{no} (SN {sn}) ไม่ได้รับค่าจากมิเตอร์ Zero-export (Grid Status = Static) นานผิดปกติ "
+                                f"{len(g)} วัน ขณะเครื่องอื่นปกติ — {lst} · ระหว่างนั้นเครื่องจ่าย 0 W (fail-safe) "
+                                "= สาเหตุของ 'หยุดจ่ายไฟกลางวัน' ของเครื่องนี้ ไม่ใช่ตัวเครื่องเสีย — "
+                                "ตรวจสาย/ขั้วต่อ RS485 ที่โหนดของเครื่องนี้"})
 
     # เครื่องที่ "ไม่มีแถวเลย" ไม่อยู่ใน summ — ต้องเทียบกับรายการ 11 ตัวเอง ไม่งั้นหายเงียบ
     # (logger หลุด / ปิดเครื่อง / ลืม export ไฟล์ของเครื่องนั้น) ทั้งที่ผลผลิตหายไปทั้งเครื่อง
@@ -818,7 +959,8 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
             out.append({"level": "warning", "inv_no": r["inv_no"],
                         "text": f"{tag} เป็นเครื่องที่ระบบยังไม่รู้จัก (ไม่อยู่ในรายการ 11 ตัวเดิม) — ถ้าเปลี่ยน "
                                 "อินเวอร์เตอร์ใหม่ ให้แจ้งคนดูแลระบบเพิ่ม SN นี้ใน INVERTER_NO ของ solar_etl.py"})
-        if r["status"].startswith("ตรวจสอบ"):
+        # ดูจาก ratio ตรง ๆ ไม่ใช่จากคอลัมน์ status (สถานะ "ไม่จ่ายไฟ" มาก่อน แต่ MPPT ที่ตกในวันอื่นยังต้องแจ้ง)
+        if pd.notna(r["mppt_min_ratio"]) and r["mppt_min_ratio"] < 1 - MPPT_ALERT:
             # แจ้งทุก MPPT ที่ต่ำกว่าเกณฑ์ ไม่ใช่แค่ตัวแย่สุด (#6 MPPT 5 ที่ 56% เคยถูกข้ามเพราะ MPPT 6 แย่กว่า)
             low = mt[(mt["sn"] == r["sn"]) & (mt["ratio"] < 1 - MPPT_ALERT)].sort_values("ratio")
             lst = ", ".join(f"MPPT {int(x.mppt)} {x.ratio*100:.0f}%" for x in low.itertuples())
@@ -843,13 +985,18 @@ def alerts(daily: pd.DataFrame) -> list[dict]:
                                 "สตริงอาจขาด (connector/ฟิวส์/สายหลุด) ให้ช่างวัดแรงดันหน้างาน"})
 
     # ถูกจำกัดกำลังระดับระบบ (Zero-export วันโหลดต่ำ) — ข้อมูลประกอบ ไม่ใช่ความผิดปกติของเครื่อง
-    cur = daily[daily["curtail_min"] >= 60].groupby("date")["sn"].nunique()
+    # ไม่นับเครื่องที่ไม่จ่ายไฟทั้งวัน (แจ้งเป็น error ด้านบนแล้ว) — ไม่งั้นข้อความนี้จะบอกว่า "ไม่ใช่เครื่องเสีย"
+    # ทั้งที่ 9 เครื่องหยุดไป 4 วัน (10–13 ต.ค. 69)
+    not_zero = ~daily["zero_day"] if "zero_day" in daily.columns else pd.Series(True, index=daily.index)
+    cur = daily[(daily["curtail_min"] >= 60) & not_zero].groupby("date")["sn"].nunique()
     cur = cur[cur >= N_INVERTERS // 2]
     if not cur.empty:
         lst = ", ".join(f"{fmt_d(d)} ({n} เครื่อง)" for d, n in cur.items())
         out.append({"level": "info", "inv_no": 0,
-                    "text": f"ระบบถูกจำกัดกำลัง (Zero-export) อย่างน้อย 1 ชม. ใน {len(cur)} วัน — {lst} · "
-                            "ผลผลิตวันนั้นต่ำเพราะโรงงานโหลดต่ำ ไม่ใช่เพราะแดดหรือเครื่องเสีย"})
+                    "text": f"ถูกจำกัดกำลังบางช่วง (Pac < {CURTAIL_PAC_KW:.0f} kW ขณะ Vdc > {CURTAIL_VDC:.0f} V) "
+                            f"อย่างน้อย 1 ชม. ใน {len(cur)} วัน — {lst} · วันหยุดโรงงานคือ Zero-export ตอนโหลดต่ำ "
+                            "(ไม่ใช่แดดหรือเครื่องเสีย) · ถ้าเป็นวันทำงานหรือเป็นวันเดียวกับที่มีเครื่องไม่จ่ายไฟ "
+                            "ให้ดูว่าระบบควบคุมสั่งลดกำลังจากอะไร"})
 
     # พลังงานที่ผลิตช่วง logger เงียบข้ามวัน — มิเตอร์สะสมยืนยันว่าผลิตจริง แต่ระบุวันไม่ได้ จึงไม่อยู่ในยอดรายวัน
     sys_gap_days: set = set()
@@ -1088,12 +1235,20 @@ def run_update(rebuild: bool = False, check: bool = False, out=print) -> int:
             + ", ".join(f"#{INVERTER_NO[s]} ({s})" for s in lack) + " ***")
     for r in ld.itertuples():
         flag = ""
+        if getattr(r, "zero_day", False):
+            flag += "  <<< ออนไลน์แต่ไม่จ่ายไฟทั้งวัน"
+        if getattr(r, "static_min", 0) >= STATIC_NODE_MIN:
+            flag += f"  ไม่ได้รับค่ามิเตอร์ {int(r.static_min)} นาที"
         if r.outage_min > 0:
             flag += f"  หยุดกลางวัน {r.outage_min} นาที"
         if r.n_fault > 0:
             flag += f"  fault {r.n_fault} เฟรม"
         out(f"    #{int(r.inv_no):>2}  SN {r.sn}  {r.ac_kwh:>7,.0f} kWh  สูงสุด {r.pac_max:>5.0f} kW"
             f"  ข้อมูล {r.coverage_pct:>3.0f}%{flag}")
+    nz = ld[ld["zero_day"]] if "zero_day" in ld.columns else ld.iloc[0:0]
+    if not nz.empty:
+        out(f"  *** {len(nz)} เครื่องออนไลน์แต่ไม่จ่ายไฟทั้งวัน ({', '.join('#' + str(int(x)) for x in nz['inv_no'])}) "
+            "— ไม่ใช่ข้อมูลขาด ตรวจระบบจำกัดกำลัง/การตั้งค่าในเว็บ EVE และหน้าจอเครื่อง (รายละเอียดด้านล่าง) ***")
     al = alerts(daily[daily["date"] >= last - pd.Timedelta(days=6)])
     if al:
         out(f"\n  สิ่งที่ต้องตรวจ (7 วันล่าสุด) {len(al)} รายการ:")

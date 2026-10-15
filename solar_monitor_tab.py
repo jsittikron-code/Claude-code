@@ -206,26 +206,57 @@ def _ref_rules(refs: list[tuple[float, str, str]]) -> alt.Chart:
 
 
 NO_DATA_COLOR = "#334155"
+STOPPED_COLOR = "#7f1d1d"      # เครื่องออนไลน์แต่ไม่จ่ายไฟทั้งวัน — แดงเข้ม ให้ต่างจากเทา "ไม่มีข้อมูล" ชัด ๆ
 
 
 def _ratio_heatmap(df: pd.DataFrame, x, y, tip: list, font: int = 12) -> alt.LayerChart:
     """ตาราง % เทียบค่าเฉลี่ยต่อสตริง — ช่องที่คำนวณไม่ได้ (ข้อมูลกลางวันไม่พอ) เป็นสีเทาพร้อม "—"
-    ไม่ปล่อยให้หายไปเฉย ๆ หรือโชว์ตัวเลขจากข้อมูลตอนเย็นที่ไม่มีความหมาย"""
+    ไม่ปล่อยให้หายไปเฉย ๆ หรือโชว์ตัวเลขจากข้อมูลตอนเย็นที่ไม่มีความหมาย
+    ถ้า df มีคอลัมน์ "หยุด" (bool) ช่องที่คำนวณไม่ได้เพราะเครื่องไม่จ่ายไฟทั้งวันจะเป็นสีแดงเข้ม "หยุด"
+    — 10–13 ต.ค. 69 เครื่อง 9 ตัวขึ้นเทาทั้งแถวจนผู้ใช้เข้าใจว่า "ข้อมูลขาด" ทั้งที่เครื่องหยุดจ่ายไฟจริง"""
     df = df.copy()
     df["เทียบเฉลี่ย"] = df["ratio"] * 100
-    df["ว่าง"] = df["เทียบเฉลี่ย"].isna()
-    df["ป้าย"] = df["เทียบเฉลี่ย"].map(lambda v: "—" if pd.isna(v) else f"{v:.0f}")
-    df["สถานะ"] = np.where(df["ว่าง"], "ข้อมูลกลางวันไม่พอ — ไม่คำนวณ", "คำนวณแล้ว")
+    stopped = df["หยุด"].fillna(False).astype(bool) if "หยุด" in df.columns else pd.Series(False, index=df.index)
+    df["หยุด"] = stopped & df["เทียบเฉลี่ย"].isna()
+    df["ว่าง"] = df["เทียบเฉลี่ย"].isna() & ~df["หยุด"]
+    df["ป้าย"] = np.where(df["หยุด"], "หยุด", df["เทียบเฉลี่ย"].map(lambda v: "—" if pd.isna(v) else f"{v:.0f}"))
+    df["สถานะ"] = np.select([df["หยุด"], df["ว่าง"]],
+                            ["เครื่องออนไลน์แต่ไม่จ่ายไฟทั้งวัน — ไม่ใช่ข้อมูลขาด", "ข้อมูลกลางวันไม่พอ — ไม่คำนวณ"],
+                            "คำนวณแล้ว")
     tip = tip + [alt.Tooltip("เทียบเฉลี่ย:Q", title="เทียบเฉลี่ยต่อสตริง (%)", format=".0f"),
                  alt.Tooltip("สถานะ:N", title="สถานะ")]
     base = alt.Chart(df).encode(x=x, y=y, tooltip=tip)
     gray = base.transform_filter(alt.datum["ว่าง"]).mark_rect(color=NO_DATA_COLOR)
-    heat = base.transform_filter(~alt.datum["ว่าง"]).mark_rect().encode(color=alt.Color(
+    stop = base.transform_filter(alt.datum["หยุด"]).mark_rect(color=STOPPED_COLOR)
+    heat = base.transform_filter(~alt.datum["ว่าง"] & ~alt.datum["หยุด"]).mark_rect().encode(color=alt.Color(
         "เทียบเฉลี่ย:Q", title="% ของเฉลี่ย", scale=alt.Scale(scheme="redyellowgreen", domain=[50, 120], clamp=True)))
     txt = base.mark_text(fontWeight="bold", fontSize=font).encode(
         text="ป้าย:N",
-        color=alt.condition("datum['ว่าง'] || datum['เทียบเฉลี่ย'] < 70", alt.value("#e2e8f0"), alt.value("#0f172a")))
-    return alt.layer(gray, heat, txt)
+        color=alt.condition("datum['ว่าง'] || datum['หยุด'] || datum['เทียบเฉลี่ย'] < 70",
+                            alt.value("#e2e8f0"), alt.value("#0f172a")))
+    return alt.layer(gray, stop, heat, txt)
+
+
+def _zero_flags(daily: pd.DataFrame) -> pd.Series:
+    """คอลัมน์ zero_day ของ solar_etl (bool) — parquet รุ่นก่อนไม่มี ให้ถือว่า False ทั้งหมด"""
+    if "zero_day" in daily.columns:
+        return daily["zero_day"].fillna(False).astype(bool)
+    return pd.Series(False, index=daily.index)
+
+
+def last_day_status(sig: tuple) -> dict | None:
+    """สถานะวันล่าสุดสำหรับแถบด้านข้าง: {date, n_on, n_zero, n_nodata} — None ถ้ายังไม่มีข้อมูล"""
+    if not sig or not all(m for _, m in sig):
+        return None
+    try:
+        daily = _load(sig)[0]
+    except Exception:
+        return None
+    last = daily["date"].max()
+    ld = daily[daily["date"] == last]
+    n_on = int((ld["ac_kwh"].fillna(0) >= se.ZERO_DAY_AC_KWH).sum())
+    return {"date": last, "n_on": n_on, "n_zero": int(_zero_flags(ld).sum()),
+            "n_nodata": se.N_INVERTERS - int(ld["ac_kwh"].notna().sum())}
 
 
 def _with_refs(chart: alt.Chart, refs) -> alt.LayerChart:
@@ -723,9 +754,15 @@ def render(kpi_card) -> None:
     peak = sys_slot.loc[sys_slot["pac_mean"].idxmax()] if not sys_slot.empty else None
     summ = se.inverter_summary(daily)
     al = se.alerts(daily)
-    n_bad = len({a["inv_no"] for a in al if a["level"] in ("error", "warning")})
+    # รายการที่รวมหลายเครื่อง (ไม่จ่ายไฟพร้อมกัน) ใส่เลขเครื่องไว้ใน inv_nos — ต้องนับทุกตัว ไม่ใช่แค่ inv_no หลัก
+    n_bad = len({n for a in al if a["level"] in ("error", "warning")
+                 for n in [a["inv_no"], *a.get("inv_nos", [])]} - {0})
+    ld = daily[daily["date"] == end]
+    n_zero = int(_zero_flags(ld).sum())
+    n_on = int((ld["ac_kwh"].fillna(0) >= se.ZERO_DAY_AC_KWH).sum())
+    n_nodata = se.N_INVERTERS - int(ld["ac_kwh"].notna().sum())
 
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
     with k1:
         gap_kwh = float(daily["gap_kwh"].sum()) if "gap_kwh" in daily.columns else 0.0
         kpi_card("ผลิตได้ (AC)", f"{ac_total:,.0f} kWh", COLOR_SOLAR,
@@ -753,6 +790,12 @@ def render(kpi_card) -> None:
     with k6:
         kpi_card("เครื่องที่ต้องตรวจ", f"{n_bad} เครื่อง", COLOR_ALERT if n_bad else COLOR_COST,
                  f"จาก {len(al)} รายการแจ้งเตือนในช่วงนี้" if al else "ไม่พบความผิดปกติในช่วงนี้")
+    with k7:
+        # จำนวนเครื่องที่จ่ายไฟจริงในวันล่าสุดของช่วง — ตัวเลขเดียวที่บอกได้ทันทีว่า "ข้อมูลขาด" หรือ "เครื่องหยุด"
+        kpi_card("เครื่องที่จ่ายไฟ", f"{n_on}/{se.N_INVERTERS} เครื่อง",
+                 COLOR_COST if n_on >= se.N_INVERTERS else COLOR_ALERT,
+                 f"วันที่ {_fmt_date(end)}" + (f" · ไม่จ่ายไฟ {n_zero}" if n_zero else "")
+                 + (f" · ไม่มีข้อมูล {n_nodata}" if n_nodata else ""))
 
     st.markdown("")
 
@@ -827,6 +870,21 @@ def render(kpi_card) -> None:
                               .encode(**top_enc))
                 layers.append(alt.Chart(tops).mark_text(dy=-6, fontSize=10, fontWeight="bold")
                               .encode(**top_enc, color=alt.Color("สี:N", scale=None, legend=None)))
+                # วันที่มีเครื่องออนไลน์แต่ไม่จ่ายไฟทั้งวัน — ป้าย "⚠ n" เหนือยอดรวม (สั้น ๆ ไม่งั้นวันติดกันทับกัน)
+                zc = (trend.assign(z=_zero_flags(trend)).groupby("date", as_index=False)["z"].sum()
+                      .merge(tr_day, on="date"))
+                zc = zc[zc["z"] > 0]
+                if not zc.empty:
+                    zc["ป้าย"] = "⚠ " + zc["z"].astype(int).astype(str)
+                    zc["ความหมาย"] = zc["z"].astype(int).astype(str) + " เครื่องออนไลน์แต่ไม่จ่ายไฟทั้งวัน (ไม่ใช่ข้อมูลขาด)"
+                    z_enc = dict(x=x_day, y=alt.Y("รวมทั้งระบบ:Q", axis=None), text="ป้าย:N",
+                                 tooltip=[alt.Tooltip("date:T", title="วันที่", format="%d/%m/%Y"),
+                                          alt.Tooltip("ความหมาย:N", title="⚠")])
+                    layers.append(alt.Chart(zc).mark_text(dy=-20, fontSize=11, fontWeight="bold",
+                                                          stroke="#0b1220", strokeWidth=4, strokeJoin="round")
+                                  .encode(**z_enc))
+                    layers.append(alt.Chart(zc).mark_text(dy=-20, fontSize=11, fontWeight="bold", color=TARGET_MIN_COLOR)
+                                  .encode(**z_enc))
             # สเกล y ใช้ร่วมกัน (ความสูงตรงกันทุกชั้น) แต่แกนแยก: ซ้าย = kWh · ขวา = ป้าย MAX/MIN
             st.altair_chart(alt.layer(*layers).resolve_scale(color="independent").resolve_axis(y="independent")
                             .properties(height=380), width="stretch")
@@ -840,7 +898,8 @@ def render(kpi_card) -> None:
                 f"ถึง MAX {n_max}/{n_full} วัน · ถึง MIN {n_min}/{n_full} วัน · "
                 f"ตัวเลขบนแท่ง เขียว ≥ MAX · ส้ม อยู่ระหว่าง MIN–MAX · แดง < MIN · "
                 f"ดีสุด {best['ac_kwh']:,.0f} ({_fmt_date(best['date'])}) · "
-                f"แย่สุด {worst['ac_kwh']:,.0f} ({_fmt_date(worst['date'])}){partial_note}"
+                f"แย่สุด {worst['ac_kwh']:,.0f} ({_fmt_date(worst['date'])}){partial_note} · "
+                "⚠ n = จำนวนเครื่องที่ออนไลน์แต่ไม่จ่ายไฟทั้งวัน (ยอดวันนั้นต่ำเพราะเครื่องหยุด ไม่ใช่ข้อมูลขาด)"
             )
     with col_r:
         with st.container(border=True, key="solar_profile_card"):
@@ -885,12 +944,15 @@ def render(kpi_card) -> None:
                      f"สรุปรายอินเวอร์เตอร์ — {_fmt_date(start)} ถึง {_fmt_date(end)}")
         show = summ[["inv_no", "sn", "ac_kwh", "avg_kwh", "best_kwh", "best_date", "worst_kwh", "worst_date",
                      "pac_max", "cf_pct", "eff_pct", "mppt_best", "mppt_worst", "mppt_min_ratio",
-                     "coverage_pct", "outage_days", "outage_min", "n_fault", "curtail_days", "status", "fw"]].copy()
+                     "coverage_pct", "zero_days", "outage_days", "outage_min", "n_fault", "curtail_days",
+                     "status", "fw"]].copy()
         show["mppt_min_ratio"] = show["mppt_min_ratio"] * 100
         show["ac_share"] = show["ac_kwh"] / show["ac_kwh"].sum() * 100
         show.insert(3, "ac_share", show.pop("ac_share"))
 
         def _row_style(r):
+            if r["zero_days"] > 0:
+                return ["background-color: rgba(127,29,29,0.45)"] * len(r)
             if r["status"] != "ปกติ" or r["outage_days"] > 0:
                 return ["background-color: rgba(220,38,38,0.12)"] * len(r)
             return [""] * len(r)
@@ -917,6 +979,9 @@ def render(kpi_card) -> None:
                     help=f"ต่ำกว่า {100 * (1 - se.MPPT_ALERT):.0f}% = ต้องตรวจ (เกณฑ์เดียวกับชีต Summary)"),
                 "coverage_pct": st.column_config.NumberColumn("ข้อมูลครบ %", format="%.0f",
                                                               help="เทียบเครื่องที่ส่งข้อมูลครบที่สุดในวันเดียวกัน"),
+                "zero_days": st.column_config.NumberColumn(
+                    "วันไม่จ่ายไฟ", format="%d",
+                    help="เครื่องออนไลน์ (logger ส่งข้อมูลครบ สถานะปกติ) แต่ผลิตได้ 0 kWh ทั้งวัน ขณะเครื่องอื่นผลิตได้"),
                 "outage_days": st.column_config.NumberColumn("วันหยุดกลางวัน", format="%d"),
                 "outage_min": st.column_config.NumberColumn("นาทีหยุด", format="%d"),
                 "n_fault": st.column_config.NumberColumn("เฟรม Fault", format="%d"),
@@ -927,7 +992,7 @@ def render(kpi_card) -> None:
         )
         st.caption(
             "AC รวม = ผลต่างมิเตอร์รายวันของเครื่อง (Eday) · DC จากการอินทิเกรต Pdc ทุก ~65 วินาที · "
-            "แถวสีแดง = มีเรื่องให้ตรวจ (ดูรายละเอียดด้านล่าง)"
+            "แถวแดงเข้ม = ออนไลน์แต่ไม่จ่ายไฟทั้งวัน · แถวแดงจาง = มีเรื่องให้ตรวจ (ดูรายละเอียดด้านล่าง)"
         )
 
     # ---- ราย MPPT: heatmap + สุขภาพสตริง (ดูทั้งช่วง หรือเลือกดูทีละวัน) ----
@@ -948,6 +1013,8 @@ def render(kpi_card) -> None:
             st.subheader(f"ราย MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่อง (%) · {md_label}")
             hm = se.mppt_table(md).rename(columns={"mppt": "MPPT"})
             hm["เครื่อง"] = "#" + hm["inv_no"].astype(str)
+            # เครื่องที่ไม่จ่ายไฟทั้งวัน (วันใดวันหนึ่งในช่วง) และคำนวณ % ไม่ได้เลย → ช่อง "หยุด" ไม่ใช่ "—"
+            hm["หยุด"] = hm["sn"].map(md.assign(z=_zero_flags(md)).groupby("sn")["z"].any()).fillna(False)
             st.altair_chart(_ratio_heatmap(
                 hm, x=alt.X("MPPT:O", title="MPPT"), y=alt.Y("เครื่อง:N", sort=labels, title=None),
                 tip=["เครื่อง", "sn", "MPPT",
@@ -962,13 +1029,18 @@ def render(kpi_card) -> None:
                        "(ฝุ่น เงาบัง สตริงขาด ฟิวส์ DC) · จำนวนสตริงต่อ MPPT (1 หรือ 2) อนุมานจากกระแสกลางวัน "
                        "เพราะแบบติดตั้งต่อ MPPT 5/6 สตริงเดียว ถ้าเทียบ kWh ตรง ๆ จะฟ้องผิดทุกเครื่อง · "
                        f"ช่องเทา — = ข้อมูลช่วง 10–14 น. ไม่ถึง {se.MPPT_MIN_MID_FRAMES} จุด (logger ส่งแต่ตอนเย็น/"
-                       "เครื่องหยุด/วันถูกจำกัดกำลัง) จึงไม่คำนวณ")
+                       "วันถูกจำกัดกำลัง) จึงไม่คำนวณ · ช่องแดงเข้ม หยุด = เครื่องออนไลน์แต่ไม่จ่ายไฟทั้งวัน "
+                       "(ข้อมูลครบ แต่ผลิต 0 — ดูสิ่งที่ต้องตรวจด้านล่าง)")
     with col_r2:
         with st.container(border=True, key="solar_string_health"):
             st.subheader(f"สุขภาพสตริง — Vdc กลางวัน (V) · {md_label}")
             sh = se.string_health(md)
+            zero_inv = sorted(int(x) for x in md.loc[_zero_flags(md), "inv_no"].unique())
+            if zero_inv:
+                st.error("ไม่จ่ายไฟทั้งวัน: " + ", ".join(f"#{n}" for n in zero_inv)
+                         + " — ไม่มีค่าขณะผลิตให้เทียบ (Vdc ลอยที่แรงดันเปิดวงจร ~850 V ไม่ใช่ค่าสตริงขณะทำงาน)")
             if sh.empty:
-                st.info("ยังไม่มีค่ากลางวันพอสำหรับคำนวณ")
+                st.info("ยังไม่มีค่ากลางวันพอสำหรับคำนวณ" + (" — เครื่องที่เหลือไม่จ่ายไฟในวันนี้" if zero_inv else ""))
             else:
                 pv = sh.pivot(index="inv_no", columns="mppt", values="vdc_mid").round(0)
                 pv.columns = [f"MPPT {c}" for c in pv.columns]
@@ -1005,6 +1077,7 @@ def render(kpi_card) -> None:
         dm = se.mppt_daily(g)
         if not dm.empty:
             dm = dm[dm["date"] > dm["date"].max() - pd.Timedelta(days=60)]   # 60 วันล่าสุดพอ ไม่งั้นสูงเป็นเมตร
+            dm = dm.merge(g.assign(หยุด=_zero_flags(g))[["date", "หยุด"]], on="date", how="left")
             dm["วันที่"] = dm["date"].dt.strftime("%d/%m/%y")                # ต้องมีปี ข้ามปีแล้ววันซ้ำกัน
             day_sort = list(dict.fromkeys(dm.sort_values("date", ascending=False)["วันที่"]))
             st.altair_chart(_ratio_heatmap(
@@ -1014,7 +1087,8 @@ def render(kpi_card) -> None:
                      alt.Tooltip("n_str:Q", title="จำนวนสตริง"),
                      alt.Tooltip("vdc_mid:Q", title="Vdc กลางวัน (V)", format=".0f")], font=11).properties(
                 height=max(160, 22 * len(day_sort)),
-                title="รายวัน × MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่องในวันนั้น (%) · ช่องเทา = ข้อมูลกลางวันไม่พอ"),
+                title="รายวัน × MPPT — พลังงานต่อสตริง เทียบค่าเฉลี่ยของเครื่องในวันนั้น (%) · "
+                      "ช่องเทา = ข้อมูลกลางวันไม่พอ · แดงเข้ม หยุด = ออนไลน์แต่ไม่จ่ายไฟทั้งวัน"),
                 width="stretch")
 
         ml = g.melt(id_vars=["date"], value_vars=se.E_COLS, var_name="mppt", value_name="kWh")
@@ -1053,15 +1127,26 @@ def render(kpi_card) -> None:
                 format_func=lambda x: pd.Timestamp(x).strftime("%d/%m/%Y (%a)"))
             po = prof_all[(prof_all["sn"] == sel) & (prof_all["date"] == iday) & prof_all["outage"]]["slot"]
             no = int(opts.loc[opts["sn"] == sel, "inv_no"].iloc[0])
+            zrow = g[(g["date"] == iday) & _zero_flags(g)]
+            if not zrow.empty:
+                r0 = zrow.iloc[0]
+                v = r0["vdc_mid_all"] if "vdc_mid_all" in zrow.columns and pd.notna(r0.get("vdc_mid_all")) else None
+                st.error(f"วันนี้เครื่องนี้ออนไลน์แต่ไม่จ่ายไฟทั้งวัน — logger ส่ง {int(r0['n_rows']):,} แถว "
+                         f"สถานะ {r0.get('status_mid', '') or 'ปกติ'} แต่ Pac = 0 และ Eday = 0"
+                         + (f" · Vdc กลางวัน ~{v:,.0f} V (แรงดันเปิดวงจร = ไม่ดึงกำลังจากแผง)" if v else "")
+                         + " · ไม่ใช่ข้อมูลขาด ให้ตรวจระบบจำกัดกำลัง/การตั้งค่าในเว็บ EVE และหน้าจอเครื่อง")
             _intraday(_readings(sig, iday, sel), pd.Timestamp(iday), po, inv_label=f"#{no} · SN {sel}")
 
         det = g[["date", "ac_kwh", "dc_kwh", "eff_pct"] + se.E_COLS + ["pac_max", "pdc_max",
-                 "coverage_pct", "outage_min", "curtail_min", "n_fault", "t_heatsink_max"]].copy()
+                 "coverage_pct", "outage_min", "curtail_min", "n_fault", "t_heatsink_max"]
+                + (["static_min"] if "static_min" in g.columns else [])].copy()
+        det.insert(2, "zero_day", _zero_flags(g))
         det = det.sort_values("date", ascending=False)
         st.dataframe(
             det, hide_index=True, width="stretch",
             column_config={
                 "date": st.column_config.DateColumn("วันที่", format="DD/MM/YYYY"),
+                "zero_day": st.column_config.CheckboxColumn("ไม่จ่ายไฟทั้งวัน", help="ออนไลน์ ข้อมูลครบ แต่ผลิต 0 kWh"),
                 "ac_kwh": st.column_config.NumberColumn("AC (kWh)", format="%.1f"),
                 "dc_kwh": st.column_config.NumberColumn("DC (kWh)", format="%.1f"),
                 "eff_pct": st.column_config.NumberColumn("DC→AC %", format="%.1f"),
@@ -1073,6 +1158,10 @@ def render(kpi_card) -> None:
                 "curtail_min": st.column_config.NumberColumn("ถูกจำกัด (นาที)", format="%d"),
                 "n_fault": st.column_config.NumberColumn("Fault", format="%d"),
                 "t_heatsink_max": st.column_config.NumberColumn("Heatsink max °C", format="%.0f"),
+                "static_min": st.column_config.NumberColumn(
+                    "ไม่ได้รับค่ามิเตอร์ (นาที)", format="%d",
+                    help="นาที 08–16 น. ที่ Grid Status = Static (ไม่ได้ค่าจากมิเตอร์ Zero-export) · ปกติ 40–90 · "
+                         "เครื่องกลุ่ม #1–#5, #7–#10 จ่าย 0 W ระหว่างนั้น"),
             },
         )
         raw_day = iday if iday is not None else sel_day
@@ -1096,8 +1185,13 @@ def render(kpi_card) -> None:
         for a in al:
             {"error": st.error, "warning": st.warning, "info": st.info}[a["level"]](a["text"])
         st.caption(
-            "หยุดกลางวัน = เครื่องนี้ไม่จ่ายไฟ 08–16 น. ขณะค่ากลางของเครื่องอื่น ≥ 10 kW (ระบบ EVE ไม่ส่ง alarm กรณีนี้) · "
-            "ถูกจำกัดกำลัง = ผลิต < 20 kW ทั้งที่ Vdc > 800 V (Zero-export วันโหลดต่ำ ไม่ใช่เครื่องเสีย)"
+            "ไม่จ่ายไฟทั้งวัน = logger ส่งข้อมูลครบ สถานะปกติ แต่ผลิต 0 kWh ทั้งวันขณะเครื่องอื่นผลิตได้ (ไม่ใช่ข้อมูลขาด — "
+            "ระบบ EVE ไม่ส่ง alarm กรณีนี้) · "
+            "หยุดกลางวัน = เครื่องนี้ไม่จ่ายไฟ 08–16 น. ขณะค่ากลางของเครื่องอื่น ≥ 10 kW · "
+            "ถูกจำกัดกำลัง = ผลิต < 20 kW บางช่วงทั้งที่ Vdc > 800 V (Zero-export วันโหลดต่ำ — ถ้าเป็นทั้งวันจะขึ้นเป็น "
+            "ไม่จ่ายไฟทั้งวัน แทน) · "
+            "ไม่ได้รับค่ามิเตอร์ = Grid Status ของอินเวอร์เตอร์เป็น Static (ลิงก์ RS485 มิเตอร์ Zero-export หลุด) — "
+            "เครื่องกลุ่ม #1–#5, #7–#10 ตั้ง fail-safe จ่าย 0 W ระหว่างนั้น ส่วน #11 ไม่หยุด"
         )
 
     # ---- ดาวน์โหลด ----
