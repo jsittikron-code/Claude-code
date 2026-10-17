@@ -320,6 +320,153 @@ STATUS_COLORS = {"Grid connected": "#22c55e", "Checking": "#f59e0b", "Standby": 
                  OUTAGE_LABEL: "#d946ef"}
 STRIP_ROWS = ["เครื่องรายงาน", "ระบบตรวจพบ"]
 
+# ---- แผงรายละเอียด "ช่วงที่ข้อมูลหาย / หยุดจ่ายไฟ" (ขอ 16 ต.ค. 69 — #6 ใหม่ส่งข้อมูล 128 จุด ขาดช่วง 100 ครั้ง) ----
+GAP_MIN = 3                 # เฟรมห่างกันเกิน 3 นาที = logger ไม่ส่งข้อมูล (คาบปกติ ~65 วินาที) — เกณฑ์เดียวกับเส้นขาดในกราฟ
+GAP_COLORS = {"≤ 5 นาที": "#64748b", "5–15 นาที": "#f59e0b", "> 15 นาที": "#ef4444"}
+DETAIL_ROWS = ["logger ไม่ส่งข้อมูล", "Pac = 0 ขณะมีข้อมูล", "หยุดจ่ายไฟ (ระบบตรวจพบ)", "ไม่ได้ค่ามิเตอร์ (Static)"]
+DETAIL_COLORS = {**GAP_COLORS, "Pac = 0": "#0ea5e9", "หยุดจ่ายไฟ": STATUS_COLORS[OUTAGE_LABEL], "Static": "#a855f7"}
+
+
+def _gap_table(raw: pd.DataFrame) -> pd.DataFrame:
+    """ช่วงที่ logger ไม่ส่งข้อมูล (เฟรมห่างกัน > GAP_MIN นาที) พร้อมค่าดิบของเฟรมก่อน/หลังช่วงนั้น
+    "ผลิตระหว่างหาย" = ผลต่างมิเตอร์สะสม Ecum ของเฟรมหลังลบเฟรมก่อน — บอกได้ว่าช่วงที่หายไปเครื่องยังผลิตอยู่ไหม"""
+    r = raw.sort_values("ts").reset_index(drop=True)
+    nxt = r.shift(-1)
+    mins = (nxt["ts"] - r["ts"]).dt.total_seconds() / 60
+    m = mins > GAP_MIN
+    g = pd.DataFrame({
+        "เริ่ม": r.loc[m, "ts"], "สิ้นสุด": nxt.loc[m, "ts"], "นาที": mins[m].round(1),
+        "Pac ก่อน (kW)": r.loc[m, "pac_kw"], "Pac หลัง (kW)": nxt.loc[m, "pac_kw"],
+        "ผลิตระหว่างหาย (kWh)": (nxt.loc[m, "ecum_kwh"] - r.loc[m, "ecum_kwh"]).round(1),
+        "Grid ก่อน": r.loc[m, "grid_status"], "Grid หลัง": nxt.loc[m, "grid_status"],
+        "สถานะก่อน": r.loc[m, "status"], "สถานะหลัง": nxt.loc[m, "status"],
+    }).reset_index(drop=True)
+    g["ระดับ"] = pd.cut(g["นาที"], [0, 5, 15, 1e9], labels=list(GAP_COLORS)).astype(str)
+    return g
+
+
+def _outage_table(raw: pd.DataFrame, outage_slots, sys_med: pd.Series | None) -> pd.DataFrame:
+    """ช่วง 15 นาทีที่ระบบตรวจพบว่าหยุดจ่ายไฟ — ค่าดิบในช่วงนั้นของเครื่องนี้ เทียบค่ากลางของเครื่องอื่น"""
+    rows = []
+    for t in pd.to_datetime(pd.Series(list(outage_slots))):
+        w = raw[(raw["ts"] >= t) & (raw["ts"] < t + pd.Timedelta(minutes=15))]
+        rows.append({
+            "ช่วง": f"{t:%H:%M}–{t + pd.Timedelta(minutes=15):%H:%M}", "เฟรมในช่วง": len(w),
+            "Pac สูงสุด (kW)": w["pac_kw"].max() if len(w) else np.nan,
+            "Vdc เฉลี่ย (V)": w["vdc_mean"].mean() if len(w) else np.nan,
+            "Grid status": (", ".join(f"{k} ×{v}" for k, v in w["grid_status"].value_counts().items())
+                            if len(w) else "ไม่มีเฟรม (logger ไม่ส่ง)"),
+            "สถานะเครื่อง": ", ".join(str(s) for s in w["status"].unique()) if len(w) else "",
+            "เครื่องอื่น ค่ากลาง (kW)": float(sys_med.get(t, np.nan)) if sys_med is not None else np.nan,
+        })
+    return pd.DataFrame(rows)
+
+
+def _gap_panel(raw: pd.DataFrame, outage_slots, sys_med: pd.Series | None, x, key: str) -> None:
+    """กราฟเส้นเวลา + ตารางค่าดิบ: logger หายช่วงไหน · Pac = 0 ตอนไหน · ระบบตรวจพบหยุดจ่ายไฟช่วงไหน · ไม่ได้ค่ามิเตอร์ตอนไหน
+    ทำไว้ให้ชี้ได้ทันทีว่า "ข้อมูลหาย" กับ "เครื่องหยุด" เกิดเวลาไหน โดยไม่ต้องเปิดไฟล์ดิบ"""
+    gaps = _gap_table(raw)
+    n_out = 0 if outage_slots is None else len(outage_slots)
+    day_hrs = raw["ts"].dt.hour.between(se.DAYLIGHT_HOURS[0], se.DAYLIGHT_HOURS[1] - 1)
+    zero = raw[(raw["pac_kw"].fillna(0) <= se.OUTAGE_PAC_KW) & day_hrs]
+    static = raw[raw["grid_status"] == se.METER_LOST_STATUS]
+    static_min = float(((static["ts_end"] - static["ts"]).dt.total_seconds() / 60).sum()) if len(static) else 0.0
+    gap_min = float(gaps["นาที"].sum()) if len(gaps) else 0.0
+    with st.container(border=True, key=key):
+        st.markdown("**ช่วงที่ข้อมูลหาย / หยุดจ่ายไฟ — รายละเอียดและข้อมูลดิบ**")
+        with st.container(horizontal=True):
+            st.metric("logger ไม่ส่งข้อมูล", f"{len(gaps)} ครั้ง", f"รวม {gap_min:,.0f} นาที · นานสุด "
+                      f"{gaps['นาที'].max():.0f} นาที" if len(gaps) else "ต่อเนื่องทั้งวัน",
+                      delta_color="inverse" if len(gaps) else "off", border=True)
+            st.metric("Pac = 0 ขณะมีข้อมูล (08–16 น.)", f"{len(zero)} เฟรม",
+                      "เครื่องไม่แปลงไฟ ณ ตอนนั้น" if len(zero) else "ไม่พบ",
+                      delta_color="inverse" if len(zero) else "off", border=True)
+            st.metric("หยุดจ่ายไฟ (ระบบตรวจพบ)", f"{n_out * 15} นาที", f"{n_out} ช่วง 15 นาที" if n_out else "ไม่พบ",
+                      delta_color="inverse" if n_out else "off", border=True)
+            st.metric("ไม่ได้ค่ามิเตอร์ (Static)", f"{static_min:,.0f} นาที", f"{len(static)} เฟรม · ปกติ 40–90 นาที/วัน",
+                      delta_color="inverse" if static_min > 120 else "off", border=True)
+        parts = []
+        if len(gaps):
+            parts.append(pd.DataFrame({"ts": gaps["เริ่ม"], "ts_end": gaps["สิ้นสุด"], "แถว": DETAIL_ROWS[0],
+                                       "ชนิด": gaps["ระดับ"], "รายละเอียด": gaps["นาที"].astype(str) + " นาที"}))
+        if len(zero):
+            parts.append(pd.DataFrame({"ts": zero["ts"], "ts_end": zero["ts_end"], "แถว": DETAIL_ROWS[1], "ชนิด": "Pac = 0",
+                                       "รายละเอียด": "Vdc " + zero["vdc_mean"].round(0).astype(str) + " V · " + zero["grid_status"]}))
+        if n_out:
+            s = pd.to_datetime(pd.Series(list(outage_slots)))
+            parts.append(pd.DataFrame({"ts": s, "ts_end": s + pd.Timedelta(minutes=15), "แถว": DETAIL_ROWS[2],
+                                       "ชนิด": "หยุดจ่ายไฟ", "รายละเอียด": "Pac ≤ 0.2 kW ขณะค่ากลางเครื่องอื่น ≥ 10 kW"}))
+        if len(static):
+            parts.append(pd.DataFrame({"ts": static["ts"], "ts_end": static["ts_end"], "แถว": DETAIL_ROWS[3], "ชนิด": "Static",
+                                       "รายละเอียด": "Pac " + static["pac_kw"].round(1).astype(str) + " kW"}))
+        if parts:
+            df = pd.concat(parts, ignore_index=True)
+            # ชื่อและคำอธิบายสีอยู่นอกกราฟ (เหตุผลเดียวกับแถบสถานะ — ใส่ในกราฟแล้ว Streamlit บีบจนแบน)
+            chips = " ".join(f'<span style="display:inline-block;width:11px;height:11px;border-radius:2px;'
+                             f'background:{c};margin:0 4px 0 10px;vertical-align:-1px"></span>{k}'
+                             for k, c in DETAIL_COLORS.items())
+            st.markdown(f"<small>{chips}</small>", unsafe_allow_html=True)
+            ch = alt.Chart(df).mark_rect(clip=True).encode(
+                x=x, x2="ts_end:T",
+                y=alt.Y("แถว:N", sort=DETAIL_ROWS, title=None, scale=alt.Scale(domain=DETAIL_ROWS, paddingInner=0.25),
+                        axis=alt.Axis(labelLimit=0, labelFontSize=12)),
+                color=alt.Color("ชนิด:N", scale=alt.Scale(domain=list(DETAIL_COLORS), range=list(DETAIL_COLORS.values())),
+                                legend=None),
+                tooltip=[alt.Tooltip("ts:T", title="เริ่ม", format="%H:%M:%S"), alt.Tooltip("ts_end:T", title="ถึง", format="%H:%M:%S"),
+                         alt.Tooltip("แถว:N", title="แถว"), alt.Tooltip("รายละเอียด:N", title="รายละเอียด")])
+            st.altair_chart(ch.properties(height=150), width="stretch")
+        else:
+            st.success("วันนี้ข้อมูลต่อเนื่องทั้งวัน ไม่มีช่วงหยุดจ่ายไฟ และได้ค่ามิเตอร์ตลอด")
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            st.markdown(f"**ช่วงที่ logger ไม่ส่งข้อมูล** — {len(gaps)} ครั้ง (เรียงจากนานสุด · เฟรมแรก "
+                        f"{raw['ts'].min():%H:%M:%S} · เฟรมสุดท้าย {raw['ts'].max():%H:%M:%S})")
+            if len(gaps):
+                st.dataframe(
+                    gaps.sort_values("นาที", ascending=False), hide_index=True, width="stretch", height=300,
+                    column_config={
+                        "เริ่ม": st.column_config.DatetimeColumn("เริ่ม (เฟรมสุดท้ายก่อนหาย)", format="HH:mm:ss"),
+                        "สิ้นสุด": st.column_config.DatetimeColumn("สิ้นสุด (เฟรมแรกที่กลับมา)", format="HH:mm:ss"),
+                        "นาที": st.column_config.NumberColumn("นาที", format="%.1f"),
+                        "Pac ก่อน (kW)": st.column_config.NumberColumn("Pac ก่อน (kW)", format="%.1f"),
+                        "Pac หลัง (kW)": st.column_config.NumberColumn("Pac หลัง (kW)", format="%.1f"),
+                        "ผลิตระหว่างหาย (kWh)": st.column_config.NumberColumn(
+                            "ผลิตระหว่างหาย (kWh)", format="%.1f",
+                            help="ผลต่างมิเตอร์สะสม Ecum ระหว่างเฟรมก่อน/หลัง — มากกว่า 0 = เครื่องยังผลิตอยู่ แค่ logger ไม่ส่ง"),
+                        "ระดับ": st.column_config.TextColumn("ระดับ"),
+                    })
+                st.download_button("⬇️ CSV ช่วงที่ logger ไม่ส่งข้อมูล", gaps.to_csv(index=False).encode("utf-8-sig"),
+                                   file_name=f"solar_gaps_{raw['ts'].iloc[0]:%Y%m%d}.csv", mime="text/csv", key=key + "_dl")
+            else:
+                st.caption("ไม่มีช่วงที่ห่างเกิน 3 นาที")
+        with c2:
+            st.markdown(f"**ช่วงที่หยุดจ่ายไฟ (ระบบตรวจพบ)** — {n_out} ช่วง")
+            if n_out:
+                ot = _outage_table(raw, outage_slots, sys_med)
+                st.dataframe(ot, hide_index=True, width="stretch", height=300, column_config={
+                    "Pac สูงสุด (kW)": st.column_config.NumberColumn("Pac สูงสุด (kW)", format="%.1f"),
+                    "Vdc เฉลี่ย (V)": st.column_config.NumberColumn("Vdc เฉลี่ย (V)", format="%.0f"),
+                    "เครื่องอื่น ค่ากลาง (kW)": st.column_config.NumberColumn("เครื่องอื่น ค่ากลาง (kW)", format="%.0f"),
+                })
+                st.caption("ช่วงที่มีเฟรมแค่ 1–3 เฟรม: เฟรมเดียวที่เป็น 0 จะทาสีเต็ม 15 นาที หยุดจริงอาจสั้นกว่านั้น · "
+                           "Vdc ~800 V ขึ้นไป = เครื่องไม่ดึงไฟจากแผง ณ ตอนนั้น")
+            else:
+                st.caption("ไม่พบช่วงที่เครื่องนี้ Pac ≤ 0.2 kW ขณะค่ากลางของเครื่องอื่น ≥ 10 kW (08–16 น.)")
+        cols = ["ts", "status", "grid_status", "pac_kw", "pdc_kw", "vdc_mean", "iac_r", "iac_s", "iac_t", "eday_kwh", "ecum_kwh"]
+        if n_out or len(zero):
+            with st.expander(f"เฟรมดิบจากฐานข้อมูล ในช่วงที่หยุดจ่ายไฟ / Pac = 0 ({len(zero)} เฟรม)"):
+                sel = raw[raw["ts"].isin(zero["ts"])] if len(zero) else raw.iloc[0:0]
+                if n_out:
+                    s = pd.to_datetime(pd.Series(list(outage_slots)))
+                    in_slot = pd.concat([raw[(raw["ts"] >= t) & (raw["ts"] < t + pd.Timedelta(minutes=15))] for t in s]) \
+                        if len(s) else raw.iloc[0:0]
+                    sel = pd.concat([sel, in_slot]).drop_duplicates("ts").sort_values("ts")
+                st.dataframe(sel[[c for c in cols if c in sel.columns]], hide_index=True, width="stretch", height=300,
+                             column_config={"ts": st.column_config.DatetimeColumn("เวลา", format="HH:mm:ss"),
+                                            "pac_kw": st.column_config.NumberColumn("Pac (kW)", format="%.2f"),
+                                            "pdc_kw": st.column_config.NumberColumn("Pdc (kW)", format="%.2f"),
+                                            "vdc_mean": st.column_config.NumberColumn("Vdc เฉลี่ย (V)", format="%.0f")})
+
 
 # ---------------------------------------------------------------------------
 # ผังพลังงานเคลื่อนไหล: แผง (MPPT 1–6) → อินเวอร์เตอร์ → AC 3 เฟส → โรงงาน · เล่นย้อนทั้งวันได้
@@ -538,7 +685,7 @@ def _flow_board(raw: pd.DataFrame, day: pd.Timestamp, inv_label: str, outage_slo
 
 
 def _intraday(raw: pd.DataFrame, day: pd.Timestamp, outage_slots: pd.Series | None = None,
-              inv_label: str = "") -> None:
+              inv_label: str = "", sys_med: pd.Series | None = None) -> None:
     """รายละเอียดทั้งวันของเครื่องเดียว: แถบสถานะ · KPI · กระแส DC ต่อ MPPT · กระแส AC ต่อเฟส · กำลัง · แรงดัน DC
 
     outage_slots = ช่วง 15 นาทีที่ solar_etl ตรวจพบว่าเครื่องนี้หยุดจ่ายไฟขณะเครื่องอื่นยังผลิต
@@ -630,6 +777,9 @@ def _intraday(raw: pd.DataFrame, day: pd.Timestamp, outage_slots: pd.Series | No
                  alt.Tooltip("status:N", title="สถานะ"), alt.Tooltip("grid_status:N", title="Grid"),
                  alt.Tooltip("pac_kw:Q", title="Pac (kW)", format=".1f")])
     st.altair_chart(strip.properties(height=96), width="stretch")
+
+    # ---- ช่วงที่ข้อมูลหาย / หยุดจ่ายไฟ — เส้นเวลา + ตารางค่าดิบ ----
+    _gap_panel(raw, outage_slots, sys_med, x, key="solar_gap_panel")
 
     def melt(cols: dict, name: str, value: str) -> pd.DataFrame:
         return pd.concat([raw[["ts", "seg"]].assign(**{name: k, value: raw[c]}) for k, c in cols.items()],
@@ -1144,7 +1294,11 @@ def render(kpi_card) -> None:
                          f"สถานะ {r0.get('status_mid', '') or 'ปกติ'} แต่ Pac = 0 และ Eday = 0"
                          + (f" · Vdc กลางวัน ~{v:,.0f} V (แรงดันเปิดวงจร = ไม่ดึงกำลังจากแผง)" if v else "")
                          + " · ไม่ใช่ข้อมูลขาด ให้ตรวจระบบจำกัดกำลัง/การตั้งค่าในเว็บ EVE และหน้าจอเครื่อง")
-            _intraday(_readings(sig, iday, sn_day), pd.Timestamp(iday), po, inv_label=f"#{no} · SN {sn_day}")
+            # ค่ากลาง Pac ของทั้งระบบราย 15 นาที (จาก solar_etl) — ให้ตารางหยุดจ่ายไฟบอกได้ว่าเครื่องอื่นผลิตเท่าไร
+            pday = prof_all[prof_all["date"] == iday]
+            sys_med = pday.groupby("slot")["sys_pac_median"].first() if "sys_pac_median" in pday.columns else None
+            _intraday(_readings(sig, iday, sn_day), pd.Timestamp(iday), po, inv_label=f"#{no} · SN {sn_day}",
+                      sys_med=sys_med)
 
         det = g[["date", "ac_kwh", "dc_kwh", "eff_pct"] + se.E_COLS + ["pac_max", "pdc_max",
                  "coverage_pct", "outage_min", "curtail_min", "n_fault", "t_heatsink_max"]
