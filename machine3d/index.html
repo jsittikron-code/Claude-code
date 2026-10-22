@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Machine 3D</title>
+<style>
+  :root { --bg: #0e1117; --bg2: #1b2130; --fg: #fafafa; --muted: rgba(250,250,250,.62); --chip: rgba(255,255,255,.07); --line: rgba(255,255,255,.12); --accent: #4f7fb6; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  #wrap { position: relative; width: 100%; height: 100%; border-radius: 14px; overflow: hidden;
+          background: radial-gradient(120% 95% at 50% 18%, var(--bg2) 0%, var(--bg) 72%);
+          border: 1px solid var(--line); color: var(--fg);
+          font-family: "Noto Sans Thai", "Sarabun", "Leelawadee UI", "Segoe UI", system-ui, sans-serif; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  canvas.drag { cursor: grabbing; }
+  .hud { position: absolute; inset: 0; pointer-events: none; }
+  .tl { position: absolute; left: 14px; top: 11px; max-width: 60%; }
+  .code { font-size: 26px; font-weight: 800; letter-spacing: .3px; line-height: 1.05; text-shadow: 0 2px 14px rgba(0,0,0,.5); }
+  .name { font-size: 12.5px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chips { margin-top: 7px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: var(--chip); border: 1px solid var(--line); backdrop-filter: blur(6px); white-space: nowrap; }
+  .tr { position: absolute; right: 12px; top: 12px; }
+  .st { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px;
+        background: var(--chip); border: 1px solid var(--line); backdrop-filter: blur(6px); --dot: #2ee36a; }
+  .st i { width: 9px; height: 9px; border-radius: 50%; background: var(--dot); animation: pulse 1.8s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--dot); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .bl { position: absolute; left: 14px; bottom: 10px; font-size: 11px; color: var(--muted); max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .br { position: absolute; right: 12px; bottom: 9px; display: flex; gap: 6px; align-items: center; pointer-events: auto; }
+  .btn { font: inherit; font-size: 11px; padding: 4px 9px; border-radius: 8px; background: var(--chip); border: 1px solid var(--line); color: var(--fg); cursor: pointer; backdrop-filter: blur(6px); }
+  .btn:hover { border-color: var(--accent); }
+  .btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .hint { font-size: 10.5px; color: var(--muted); margin-right: 4px; }
+  .scan { position: absolute; left: 0; right: 0; top: 0; height: 2px; opacity: 0; pointer-events: none;
+          background: linear-gradient(90deg, transparent, var(--accent), transparent); box-shadow: 0 0 12px var(--accent); }
+  .demo { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); pointer-events: auto; display: none; gap: 6px; }
+  .demo select, .demo button { font: inherit; font-size: 12px; background: #1b2130; color: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+  @media (max-width: 480px) { .code { font-size: 20px; } .hint { display: none; } .tl { max-width: 56%; } }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div class="hud" id="hud">
+    <div class="tl"><div class="code"></div><div class="name"></div><div class="chips"></div></div>
+    <div class="tr"><div class="st"><i></i><span></span></div></div>
+    <div class="bl"></div>
+    <div class="br">
+      <span class="hint">ลากเพื่อหมุน · เลื่อนล้อเพื่อซูม · ดับเบิลคลิกรีเซ็ต</span>
+      <button class="btn btn-auto" title="หมุนอัตโนมัติ">⟳ หมุนเอง</button>
+      <button class="btn btn-wire" title="มุมมองโครงลวด">⬡ โครงลวด</button>
+      <button class="btn btn-reset" title="กลับมุมมองเริ่มต้น">⤢</button>
+    </div>
+    <div class="scan"></div>
+    <div class="demo" id="demo">
+      <select id="demoKind"></select>
+      <select id="demoMotion"><option value="run">run</option><option value="idle">idle</option><option value="stop">stop</option></select>
+      <select id="demoBeacon"><option value="green">green</option><option value="yellow">yellow</option><option value="red">red</option><option value="grey">grey</option></select>
+      <button id="demoNext">ถัดไป ▶</button>
+    </div>
+  </div>
+</div>
+<script src="three.min.js?v=128"></script>
+<script src="models.js?v=2"></script>
+<script src="engine.js?v=2"></script>
+<script>
+(function () {
+  const wrap = document.getElementById("wrap"), hud = document.getElementById("hud");
+  M3D.init(document.getElementById("c"), wrap, hud);
+
+  // ---------- โหมด Streamlit (อยู่ใน iframe ของ custom component) ----------
+  const inStreamlit = window.parent !== window;
+  function send(type, data) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data || {}), "*"); }
+  if (inStreamlit) {
+    let lastH = 0;
+    window.addEventListener("message", function (ev) {
+      const d = ev.data || {};
+      if (d.type !== "streamlit:render") return;
+      if (d.theme) M3D.setTheme(d.theme);
+      const a = d.args || {};
+      const h = Math.max(200, Number(a.height) || 420);
+      if (h !== lastH) { lastH = h; send("streamlit:setFrameHeight", { height: h }); }
+      M3D.show(a);
+    });
+    send("streamlit:componentReady", { apiVersion: 1 });
+    return;
+  }
+
+  // ---------- โหมดสาธิต (เปิดไฟล์ตรง ๆ ไว้ตรวจโมเดลทุกชนิด) ----------
+  const demo = document.getElementById("demo"); demo.style.display = "flex";
+  const kinds = M3D.kinds(), labels = M3D.labels();
+  const selK = document.getElementById("demoKind"), selM = document.getElementById("demoMotion"), selB = document.getElementById("demoBeacon");
+  kinds.forEach(k => { const o = document.createElement("option"); o.value = k; o.textContent = k + " — " + (labels[k] || ""); selK.appendChild(o); });
+  const q = new URLSearchParams(location.search);
+  if (q.get("kind") && kinds.includes(q.get("kind"))) selK.value = q.get("kind");
+  if (q.get("theme") === "light") M3D.setTheme({ base: "light", backgroundColor: "#ffffff", textColor: "#31333f" });
+  const ACC = ["#2AA7B5", "#3CB371", "#4F7FB6", "#b56fd6", "#d9534f", "#e0a030", "#5fa8d3", "#e377c2", "#ff7f0e"];
+  let extraV = {}; try { extraV = JSON.parse(q.get("v") || "{}"); } catch (e) { extraV = {}; }
+  function render() {
+    const k = selK.value, i = kinds.indexOf(k);
+    M3D.show({ code: "XX-" + String(i + 1).padStart(2, "0"), name: "ตัวอย่าง " + (labels[k] || k), kind: k, variant: Object.assign({ metal: k === "miter_saw", hot: k === "panel_press", wood: k === "lathe", silo: false, wheels: 5 }, extraV),
+               group: labels[k] || k, status_text: { run: "เดินเครื่องวันล่าสุด", idle: "เงียบมา 2 วัน", stop: "หยุดเครื่อง (อยู่ระหว่างซ่อม)" }[selM.value],
+               beacon: selB.value, motion: selM.value, accent: ACC[i % ACC.length], brand: "ยี่ห้อ", model: "รุ่น" });
+  }
+  selK.onchange = selM.onchange = selB.onchange = render;
+  document.getElementById("demoNext").onclick = () => { selK.selectedIndex = (selK.selectedIndex + 1) % kinds.length; render(); };
+  render();
+})();
+</script>
+</body>
+</html>

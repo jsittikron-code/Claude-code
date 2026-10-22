@@ -10,6 +10,7 @@ import streamlit as st
 
 import auth
 import data_paths
+from machine_3d import machine_3d
 
 st.set_page_config(page_title="Dashboard งานซ่อมบำรุง 6 หมวด", page_icon="🛠️", layout="wide")
 
@@ -1054,42 +1055,61 @@ with tab_mc:
             title = f"{mc}"
             if info is not None and pd.notna(info.get("ชื่อเครื่องจักร")):
                 title += f" — {info['ชื่อเครื่องจักร']}"
-            st.markdown(f"### {title}")
 
-            if info is None:
-                st.info("เครื่องนี้ยังไม่มีในทะเบียนเครื่องจักร (แสดงเฉพาะข้อมูลงานซ่อม/MTBF/OEE)")
-            else:
-                def fld(name, fmt=None):
-                    v = info.get(name)
-                    if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v):
-                        return "—"
-                    if isinstance(v, pd.Timestamp):
-                        return v.strftime("%d/%m/%Y")
-                    if fmt and isinstance(v, (int, float)):
-                        return format(v, fmt)
-                    return str(v)
+            def fld(name, fmt=None):
+                if info is None:
+                    return "—"
+                v = info.get(name)
+                if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v):
+                    return "—"
+                if isinstance(v, pd.Timestamp):
+                    return v.strftime("%d/%m/%Y")
+                if fmt and isinstance(v, (int, float)):
+                    return format(v, fmt)
+                return str(v)
 
-                r1 = st.columns(4)
-                for col, (lab, key) in zip(r1, [("ยี่ห้อ / รุ่น", None), ("ตระกูล / ประเภท", None),
-                                                ("สถานที่ติดตั้ง", "สถานที่ติดตั้ง"),
-                                                ("ผู้รับผิดชอบ", "ผู้รับผิดชอบ")]):
-                    with col:
-                        if lab == "ยี่ห้อ / รุ่น":
-                            val = " / ".join(x for x in [fld("ยี่ห้อ"), fld("รุ่น")] if x != "—") or "—"
-                        elif lab == "ตระกูล / ประเภท":
-                            val = " / ".join(x for x in [fld("ตระกูล"), fld("ประเภท")] if x != "—") or "—"
-                        else:
-                            val = fld(key)
-                        st.caption(lab)
-                        st.markdown(f"**{val}**")
-                r2 = st.columns(4)
-                for col, (lab, key, f) in zip(r2, [("วันที่ติดตั้ง", "วันที่ติดตั้ง", None),
-                                                   ("อายุ (ปี)", "อายุ (ปี)", ",.1f"),
-                                                   ("ความถี่ PM", "ความถี่ PM", None),
-                                                   ("สถานะ", "สถานะ", None)]):
-                    with col:
-                        st.caption(lab)
-                        st.markdown(f"**{fld(key, f)}**")
+            # ซ้าย = โมเดล 3D ตัวแทนเครื่อง (สถานะจากทะเบียน) · ขวา = ชื่อและข้อมูลทะเบียน
+            c3d, cinfo = st.columns([1.15, 2.85])
+            with c3d:
+                reg_status = fld("สถานะ")
+                if info is None:
+                    st_txt, beacon, motion = "ไม่มีในทะเบียน", "yellow", "idle"
+                elif reg_status == "ปกติ":
+                    st_txt, beacon, motion = "ปกติ (ตามทะเบียน)", "green", "run"
+                else:
+                    st_txt, beacon, motion = reg_status if reg_status != "—" else "ไม่ระบุสถานะ", "grey", "stop"
+                machine_3d(
+                    mc, name=fld("ชื่อเครื่องจักร"), family=fld("ตระกูล"),
+                    group=" / ".join(x for x in [fld("ตระกูล"), fld("ประเภท")] if x != "—"),
+                    brand=fld("ยี่ห้อ"), model=fld("รุ่น"), status_text=st_txt,
+                    beacon=beacon, motion=motion, height=340, key="profile_3d",
+                )
+            with cinfo:
+                st.markdown(f"### {title}")
+                if info is None:
+                    st.info("เครื่องนี้ยังไม่มีในทะเบียนเครื่องจักร (แสดงเฉพาะข้อมูลงานซ่อม/MTBF/OEE)")
+                else:
+                    r1 = st.columns(4)
+                    for col, (lab, key) in zip(r1, [("ยี่ห้อ / รุ่น", None), ("ตระกูล / ประเภท", None),
+                                                    ("สถานที่ติดตั้ง", "สถานที่ติดตั้ง"),
+                                                    ("ผู้รับผิดชอบ", "ผู้รับผิดชอบ")]):
+                        with col:
+                            if lab == "ยี่ห้อ / รุ่น":
+                                val = " / ".join(x for x in [fld("ยี่ห้อ"), fld("รุ่น")] if x != "—") or "—"
+                            elif lab == "ตระกูล / ประเภท":
+                                val = " / ".join(x for x in [fld("ตระกูล"), fld("ประเภท")] if x != "—") or "—"
+                            else:
+                                val = fld(key)
+                            st.caption(lab)
+                            st.markdown(f"**{val}**")
+                    r2 = st.columns(4)
+                    for col, (lab, key, f) in zip(r2, [("วันที่ติดตั้ง", "วันที่ติดตั้ง", None),
+                                                       ("อายุ (ปี)", "อายุ (ปี)", ",.1f"),
+                                                       ("ความถี่ PM", "ความถี่ PM", None),
+                                                       ("สถานะ", "สถานะ", None)]):
+                        with col:
+                            st.caption(lab)
+                            st.markdown(f"**{fld(key, f)}**")
 
             d_one = rep_mc[rep_mc["รหัสเครื่อง"] == mc]
             ev_one = mtbf_all[mtbf_all["รหัสเครื่อง"] == mc] if not mtbf_all.empty else pd.DataFrame()

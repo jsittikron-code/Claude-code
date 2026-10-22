@@ -25,6 +25,7 @@ import streamlit as st
 
 import auth
 import data_paths
+from machine_3d import machine_3d
 
 # ---------------------------------------------------------------------------
 # ตั้งค่าหน้าเพจ
@@ -2302,12 +2303,14 @@ with tab_profile:
                          if (cat_map.get(m) in sel_groups
                              or m in set(day_df["Machine"]))]
 
-    # ---------- ส่วนหัว: เลือกเครื่อง + ชื่อเครื่อง + ป้ายสถานะ ----------
-    c_sel, c_info = st.columns([1, 3], vertical_alignment="center")
+    # ---------- ส่วนหัว: ซ้าย = เลือกเครื่อง + โมเดล 3D · ขวา = ชื่อ ป้ายสถานะ ตัวเลขสรุป ----------
+    c_sel, c_info = st.columns([1.15, 2.85])
     with c_sel:
         default_idx = prof_machines.index("CT-51") if "CT-51" in prof_machines else 0
         mc = st.selectbox("เลือกเครื่องจักร", prof_machines, index=default_idx,
                           key="profile_machine")
+        # โมเดล 3D ตัวแทนเครื่อง — เติมทีหลังเมื่อรู้สถานะล่าสุดของเครื่อง (คำนวณด้านล่าง)
+        viewer_3d = st.empty()
 
     reg = registry.loc[mc] if (not registry.empty and mc in registry.index) else None
     prof = machine_runtime_profile(folder_signature(), mc)
@@ -2340,12 +2343,29 @@ with tab_profile:
             f":violet-badge[:material/build: PM {_reg('ความถี่ PM', 'ไม่ระบุรอบ')}]"
         )
 
+    def _show_3d(status_text: str, beacon: str, motion: str) -> None:
+        """วาดโมเดล 3D ในช่องซ้าย — เรียกครั้งเดียวต่อรอบเมื่อรู้สถานะแล้ว"""
+        with viewer_3d.container():
+            machine_3d(
+                mc, name=_reg("ชื่อเครื่องจักร", ""), family=_reg("ตระกูล", ""),
+                group=grp if grp != "—" else "", brand=_reg("ยี่ห้อ", ""),
+                model=_reg("รุ่น", ""), status_text=status_text,
+                beacon=beacon, motion=motion, height=380, key="profile_3d",
+            )
+
     if not prof:
-        st.warning(
-            f"เครื่อง {mc} ยังไม่มีบันทึกการสแกนในฐาน Workcenter — "
-            "แสดงเฉพาะข้อมูลทะเบียนและประวัติซ่อม",
-            icon=":material/info:",
-        )
+        with c_info:
+            st.warning(
+                f"เครื่อง {mc} ยังไม่มีบันทึกการสแกนในฐาน Workcenter — "
+                "แสดงเฉพาะข้อมูลทะเบียนและประวัติซ่อม",
+                icon=":material/info:",
+            )
+        # ไม่มีบันทึกสแกน → ใช้สถานะจากทะเบียนแทน (ปกติ = ว่าง, หยุดใช้งาน = นิ่ง)
+        _reg_status = _reg("สถานะ", "")
+        if _reg_status == "ปกติ":
+            _show_3d("ยังไม่มีบันทึกสแกน", "yellow", "idle")
+        else:
+            _show_3d(_reg_status or "ไม่มีในทะเบียน", "grey", "stop")
 
     # ---------- แถบตัวเลขสรุป (KPI strip) ----------
     age = reg.get("อายุ (ปี)") if reg is not None else None
@@ -2366,7 +2386,7 @@ with tab_profile:
     period_txt = (f"{prof['d0']:%d/%m/%Y} – {prof['d1']:%d/%m/%Y} "
                   f"({prof['days']} วันบันทึก)") if prof else "ยังไม่มีข้อมูลสแกน"
 
-    with st.container(horizontal=True):
+    with c_info, st.container(horizontal=True):
         st.metric("อายุการใช้งาน",
                   f"{age:.1f} ปี" if age is not None and pd.notna(age) else "—",
                   border=True,
@@ -2418,11 +2438,12 @@ with tab_profile:
     if not rep.empty:
         _y = rep["ปี"].astype(int)
         rep_period = f" · ค่าซ่อม: ปี {_y.min()}–{_y.max()} ({len(rep):,} ใบงาน)"
-    st.caption(
-        f"📅 **ช่วงข้อมูลที่ใช้คำนวณ** — MTBF / MTTR / Availability / "
-        f"ชม.เดินเครื่อง / ผลผลิต: **{period_txt}** (ฐาน Workcenter)"
-        f"{rep_period} · อายุ/มูลค่าเครื่อง: ทะเบียนเครื่องจักร ณ ปัจจุบัน"
-    )
+    with c_info:
+        st.caption(
+            f"📅 **ช่วงข้อมูลที่ใช้คำนวณ** — MTBF / MTTR / Availability / "
+            f"ชม.เดินเครื่อง / ผลผลิต: **{period_txt}** (ฐาน Workcenter)"
+            f"{rep_period} · อายุ/มูลค่าเครื่อง: ทะเบียนเครื่องจักร ณ ปัจจุบัน"
+        )
 
     # ---------- สถานะการทำงานล่าสุด ----------
     if prof:
@@ -2444,15 +2465,20 @@ with tab_profile:
         if not open_repair.empty:
             st_txt, st_color, st_icon = "หยุดเครื่อง (อยู่ระหว่างซ่อม)", STATUS_COLORS[STATUS_DOWN], "🔴"
             st_note = str(open_repair.iloc[-1]["สาเหตุ"])
+            st_3d = ("red", "stop")
         elif gap_days == 0:
             st_txt, st_color, st_icon = "เดินเครื่องวันล่าสุด", STATUS_COLORS[STATUS_RUN], "🟢"
             st_note = f"มีการสแกนในวันที่ {prof['d1']:%d/%m/%Y} ซึ่งเป็นวันล่าสุดของฐานข้อมูล"
+            st_3d = ("green", "run")
         elif gap_days <= 3:
             st_txt, st_color, st_icon = f"เงียบมา {gap_days} วัน", STATUS_COLORS[STATUS_IDLE], "🟡"
             st_note = "ยังอยู่ในช่วงปกติ (วันหยุด/รอคิวงาน)"
+            st_3d = ("yellow", "idle")
         else:
             st_txt, st_color, st_icon = f"ไม่ได้เดินเครื่องมา {gap_days} วัน", STATUS_COLORS[STATUS_NODATA], "⚪"
             st_note = "ควรตรวจสอบว่าเครื่องหยุดใช้งาน ย้ายไลน์ หรือรอซ่อม"
+            st_3d = ("grey", "stop")
+        _show_3d(st_txt, *st_3d)
 
         col_s, col_t = st.columns([1, 2])
         with col_s:
