@@ -570,12 +570,22 @@ def main():
                      or st.context.headers.get("Host") or "localhost:8507")
         except Exception:
             _host = "localhost:8507"
-        _hostname = _host.rsplit(":", 1)[0]
+        # เปิดผ่านลิงก์ Port Forward ของ VS Code (dev tunnel) ตอนทำงานจากบ้าน
+        # host จะเป็นแบบ  <รหัส>-8507.<โซน>.devtunnels.ms  ไม่มี :พอร์ต ต่อท้าย
+        # ลิงก์ไประบบอื่นต้องเปลี่ยนเลขพอร์ตในชื่อโดเมน และใช้ https
+        # (ระบบปลายทางต้อง Add Port ใน VS Code ไว้ด้วย ไม่งั้นลิงก์เปิดไม่ขึ้น)
+        _tun = re.match(r"^(.+)-\d{2,5}(\.[^:]*devtunnels\.ms)(:\d+)?$", _host)
+
+        def _url(port: int) -> str:
+            if _tun:
+                return f"https://{_tun.group(1)}-{port}{_tun.group(2)}"
+            return f"http://{_host.rsplit(':', 1)[0]}:{port}"
+
         st.markdown(
-            f"- [⚙️ ระบบบริหาร OEE](http://{_hostname}:8506)\n"
-            f"- [🟢 ศูนย์ปฏิบัติการเครื่องจักร](http://{_hostname}:8503)\n"
-            f"- [🛠️ ระบบบริหารใบงานซ่อม](http://{_hostname}:8505)\n"
-            f"- [⚡ ระบบบริหารพลังงานโรงงาน](http://{_hostname}:8504)"
+            f"- [⚙️ ระบบบริหาร OEE]({_url(8506)})\n"
+            f"- [🟢 ศูนย์ปฏิบัติการเครื่องจักร]({_url(8503)})\n"
+            f"- [🛠️ ระบบบริหารใบงานซ่อม]({_url(8505)})\n"
+            f"- [⚡ ระบบบริหารพลังงานโรงงาน]({_url(8504)})"
         )
         st.caption(
             "หมายเหตุ: ระบบย่อยจะเปิดได้ก็ต่อเมื่อแอปนั้นรันอยู่บนเครื่องแม่ "
