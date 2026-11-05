@@ -36,11 +36,12 @@ DEPT_DIR = (
 RETRIES = 6          # จำนวนครั้งที่ลองเปิดไฟล์ด้วย Excel ก่อนยอมแพ้ (ดูเหตุผลใน recalc)
 RECALC_CYCLES = 3    # ทำรอบ เปิด-คำนวณ-เซฟ-ตรวจไฟล์ ซ้ำได้กี่รอบ ถ้าไฟล์ที่เซฟยังว่าง (ดู main)
 
+# ทำ OEE ก่อน เพราะแดชบอร์ด 7 ใน 9 ตัวอ่านไฟล์นี้ ถ้ามีอะไรล้มให้ล้มที่ไฟล์สำคัญน้อยกว่า
 TARGETS = [
-    os.path.join(DEPT_DIR, r"2.เรื่องMTBF-MTTR\รายละเอียด"
-                           r"\MTBF-MTTR_ฐานข้อมูลหลัก_2569.xlsx"),
     os.path.join(DEPT_DIR, r"3.เรื่องOverall Equipment Effectiveness"
                            r"\OEE_ฐานข้อมูลหลัก_2569.xlsx"),
+    os.path.join(DEPT_DIR, r"2.เรื่องMTBF-MTTR\รายละเอียด"
+                           r"\MTBF-MTTR_ฐานข้อมูลหลัก_2569.xlsx"),
 ]
 
 # ช่องที่ต้องมีค่าหลังคำนวณ ใช้ยืนยันว่าขั้นตอนนี้ได้ผลจริง
@@ -117,6 +118,21 @@ def recalc(paths) -> bool:
         print("  หรือเปิดไฟล์เรื่อง 2 และ 3 ด้วย Excel แล้วกด Save เองครั้งเดียว")
         return False
 
+    ok = True
+    for p in paths:
+        if not os.path.exists(p):
+            print(f"  ข้าม ไม่พบไฟล์: {os.path.basename(p)}")
+            continue
+        # เปิด Excel ใหม่ "คนละอินสแตนซ์ต่อไฟล์"
+        # 5 พ.ย. 2569: อินสแตนซ์ที่เพิ่งเซฟไฟล์ MTBF (อยู่ใน OneDrive) จะยุ่งอยู่นานกว่า
+        # 75 วิ ตอบทุกคำสั่งว่า 'Call was rejected by callee' ทำให้เปิดไฟล์ OEE ไม่ได้
+        # ทั้ง 4 รอบ ทั้งที่ไฟล์ปกติ (เปิดเดี่ยว ๆ ได้ใน 1 วิ) — แยกอินสแตนซ์แล้วไม่ติดกัน
+        if not _recalc_one(win32, p):
+            ok = False
+    return ok
+
+
+def _recalc_one(win32, p: str) -> bool:
     before = _excel_pids()
     xl = win32.DispatchEx("Excel.Application")
     ours = _excel_pids() - before          # โปรเซส Excel ที่เราเป็นคนเปิด
@@ -125,93 +141,89 @@ def recalc(paths) -> bool:
     xl.AskToUpdateLinks = False
     ok = True
     try:
-        for p in paths:
-            if not os.path.exists(p):
-                print(f"  ข้าม ไม่พบไฟล์: {os.path.basename(p)}")
-                continue
-            # Excel ปฏิเสธคำสั่งได้ถ้ามันกำลังยุ่ง หรือไฟล์เพิ่งถูกอ่านค้างอยู่
-            # (com_error 'Call was rejected by callee') รอแล้วลองใหม่มักผ่าน
-            #
-            # ต้องรอนานพอ เพราะไฟล์ OEE ถูกขั้นที่ 3 เขียนเสร็จเพียงไม่กี่วินาทีก่อนถึงตรงนี้
-            # และ OneDrive จะคว้าไฟล์ไปอัปโหลดทันที ช่วงนั้น Excel เปิดไม่ได้
-            # เดิมลอง 3 ครั้ง ห่าง 5 วิ (~15 วิ) ไม่พอ: 24 ก.ย. 2569 08:01 MTBF ผ่าน
-            # แต่ OEE ล้มทั้ง 3 ครั้ง สูตร 'หมวดหมู่เครื่อง' ว่างทั้งคอลัมน์จนมีคนมาสั่งใหม่ตอนบ่าย
-            # ตอนนี้ลอง RETRIES ครั้ง รอนานขึ้นทีละ 5 วิ (5,10,15,...) รวมราว 1.5 นาที
-            for attempt in range(1, RETRIES + 1):
-                try:
-                    wb = xl.Workbooks.Open(p, UpdateLinks=0, ReadOnly=False)
-                    xl.Calculation = -4105          # xlCalculationAutomatic
-                    xl.CalculateFullRebuild()
-                    # ต้องรอให้ Excel คำนวณเสร็จก่อนเซฟ
-                    #
-                    # CalculateFullRebuild() สั่งแล้วคืนค่าทันที ไม่ได้รอให้เสร็จ
-                    # ถ้าเซฟเลย ค่าที่ฝังลงไฟล์จะยังว่าง แล้ว pandas อ่านช่องสูตร
-                    # ได้เป็นค่าว่าง ทั้งที่เปิดดูใน Excel เห็นตัวเลขปกติ
-                    # (เจอจริง 15 ก.ย. 2569 คอลัมน์ หมวดหมู่เครื่อง ว่างทั้ง 49 แถว)
-                    #
-                    # CalculationState: 0 = คำนวณเสร็จ, 1 = กำลังคำนวณ, 2 = รอคิว
-                    for _ in range(120):            # รอไม่เกิน 60 วินาที
-                        if xl.CalculationState == 0:
-                            break
-                        time.sleep(0.5)
+        # Excel ปฏิเสธคำสั่งได้ถ้ามันกำลังยุ่ง หรือไฟล์เพิ่งถูกอ่านค้างอยู่
+        # (com_error 'Call was rejected by callee') รอแล้วลองใหม่มักผ่าน
+        #
+        # ต้องรอนานพอ เพราะไฟล์ OEE ถูกขั้นที่ 3 เขียนเสร็จเพียงไม่กี่วินาทีก่อนถึงตรงนี้
+        # และ OneDrive จะคว้าไฟล์ไปอัปโหลดทันที ช่วงนั้น Excel เปิดไม่ได้
+        # เดิมลอง 3 ครั้ง ห่าง 5 วิ (~15 วิ) ไม่พอ: 24 ก.ย. 2569 08:01 MTBF ผ่าน
+        # แต่ OEE ล้มทั้ง 3 ครั้ง สูตร 'หมวดหมู่เครื่อง' ว่างทั้งคอลัมน์จนมีคนมาสั่งใหม่ตอนบ่าย
+        # ตอนนี้ลอง RETRIES ครั้ง รอนานขึ้นทีละ 5 วิ (5,10,15,...) รวมราว 1.5 นาที
+        for attempt in range(1, RETRIES + 1):
+            try:
+                wb = xl.Workbooks.Open(p, UpdateLinks=0, ReadOnly=False)
+                xl.Calculation = -4105          # xlCalculationAutomatic
+                xl.CalculateFullRebuild()
+                # ต้องรอให้ Excel คำนวณเสร็จก่อนเซฟ
+                #
+                # CalculateFullRebuild() สั่งแล้วคืนค่าทันที ไม่ได้รอให้เสร็จ
+                # ถ้าเซฟเลย ค่าที่ฝังลงไฟล์จะยังว่าง แล้ว pandas อ่านช่องสูตร
+                # ได้เป็นค่าว่าง ทั้งที่เปิดดูใน Excel เห็นตัวเลขปกติ
+                # (เจอจริง 15 ก.ย. 2569 คอลัมน์ หมวดหมู่เครื่อง ว่างทั้ง 49 แถว)
+                #
+                # CalculationState: 0 = คำนวณเสร็จ, 1 = กำลังคำนวณ, 2 = รอคิว
+                for _ in range(120):            # รอไม่เกิน 60 วินาที
+                    if xl.CalculationState == 0:
+                        break
+                    time.sleep(0.5)
 
-                    # CalculationState == 0 ยังเชื่อไม่ได้ว่าค่าลงช่องแล้ว
-                    # 1 ต.ค. 2569 07:59 สถานะบอกเสร็จ เซฟ ปิด แล้วคอลัมน์ หมวดหมู่เครื่อง
-                    # ยังว่าง 46/46 ทั้งที่รอแล้ว — จึงต้อง "อ่านช่องจริง" ก่อนเซฟ
-                    # ถ้ายังว่าง สั่งคำนวณใหม่แล้วรออีก ทำซ้ำได้ไม่กี่รอบ
-                    computed = True          # True = มีค่า, False = ว่าง, None = ตรวจไม่ได้
-                    if os.path.basename(p) == os.path.basename(VERIFY[0]):
-                        for round_ in range(1, 4):
-                            state = _canary_filled(wb, VERIFY[1], VERIFY[2])
-                            if state is None:
-                                computed = None      # ตรวจไม่ได้ ไม่มีประโยชน์จะคำนวณซ้ำ
+                # CalculationState == 0 ยังเชื่อไม่ได้ว่าค่าลงช่องแล้ว
+                # 1 ต.ค. 2569 07:59 สถานะบอกเสร็จ เซฟ ปิด แล้วคอลัมน์ หมวดหมู่เครื่อง
+                # ยังว่าง 46/46 ทั้งที่รอแล้ว — จึงต้อง "อ่านช่องจริง" ก่อนเซฟ
+                # ถ้ายังว่าง สั่งคำนวณใหม่แล้วรออีก ทำซ้ำได้ไม่กี่รอบ
+                computed = True          # True = มีค่า, False = ว่าง, None = ตรวจไม่ได้
+                if os.path.basename(p) == os.path.basename(VERIFY[0]):
+                    for round_ in range(1, 4):
+                        state = _canary_filled(wb, VERIFY[1], VERIFY[2])
+                        if state is None:
+                            computed = None      # ตรวจไม่ได้ ไม่มีประโยชน์จะคำนวณซ้ำ
+                            break
+                        if state:
+                            computed = True
+                            break
+                        computed = False
+                        print(f"  ค่าในช่องสูตรยังว่าง สั่งคำนวณใหม่รอบ {round_}/3 "
+                              f"({os.path.basename(p)})")
+                        xl.CalculateFull()
+                        for _ in range(120):
+                            if xl.CalculationState == 0:
                                 break
-                            if state:
-                                computed = True
-                                break
-                            computed = False
-                            print(f"  ค่าในช่องสูตรยังว่าง สั่งคำนวณใหม่รอบ {round_}/3 "
-                                  f"({os.path.basename(p)})")
-                            xl.CalculateFull()
-                            for _ in range(120):
-                                if xl.CalculationState == 0:
-                                    break
-                                time.sleep(0.5)
-                            time.sleep(2)
-                    wb.Save()
-                    wb.Close(False)
-                    # ค่าที่ Excel มีในหน่วยความจำ กับค่าที่ลงไฟล์จริง ไม่ใช่สิ่งเดียวกัน
-                    # 6 และ 8 ต.ค. 2569: ตัวเช็คข้างบนเห็นค่าครบ เซฟ ปิด แล้วไฟล์บนดิสก์ว่างทั้งคอลัมน์
-                    # จึงอ่านไฟล์ที่เซฟแล้วกลับมาดูทันที และพิมพ์เวลา/ขนาดไฟล์ไว้เป็นหลักฐาน
-                    # (ตัวตัดสินจริงคือ verify() ใน main ซึ่งอ่านไฟล์เหมือนที่แดชบอร์ดอ่าน)
-                    if os.path.basename(p) == os.path.basename(VERIFY[0]):
-                        time.sleep(1)
-                        st_ = os.stat(p)
-                        on_disk = _saved_canary(p, VERIFY[1], VERIFY[2])
-                        print(f"  ไฟล์หลังเซฟ: {time.strftime('%H:%M:%S', time.localtime(st_.st_mtime))} "
-                              f"{st_.st_size:,} B · ช่องสูตรแถวสุดท้ายบนดิสก์: "
-                              f"{'มีค่า' if on_disk else 'ว่าง' if on_disk is False else 'อ่านไม่ได้'}")
-                        if on_disk is False:
-                            computed = False
-                    if computed is True:
-                        print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
-                    elif computed is None:
-                        ok = False
-                        print(f"  เซฟแล้ว แต่ยืนยันค่าในช่องสูตรไม่ได้ (ดูเหตุผลบรรทัดบน): "
-                              f"{os.path.basename(p)}")
-                    else:
-                        ok = False
-                        print(f"  เซฟแล้วแต่ค่าในช่องสูตรยังว่าง: {os.path.basename(p)}")
-                    break
-                except Exception as e:
-                    if attempt == RETRIES:
-                        ok = False
-                        print(f"  ผิดพลาด {os.path.basename(p)} หลังลอง {RETRIES} ครั้ง: {e}")
-                    else:
-                        wait = 5 * attempt
-                        print(f"  เปิดไม่ได้ (น่าจะ OneDrive กำลังซิงก์) รอ {wait} วิ "
-                              f"แล้วลองครั้งที่ {attempt + 1}/{RETRIES} ({os.path.basename(p)})")
-                        time.sleep(wait)
+                            time.sleep(0.5)
+                        time.sleep(2)
+                wb.Save()
+                wb.Close(False)
+                # ค่าที่ Excel มีในหน่วยความจำ กับค่าที่ลงไฟล์จริง ไม่ใช่สิ่งเดียวกัน
+                # 6 และ 8 ต.ค. 2569: ตัวเช็คข้างบนเห็นค่าครบ เซฟ ปิด แล้วไฟล์บนดิสก์ว่างทั้งคอลัมน์
+                # จึงอ่านไฟล์ที่เซฟแล้วกลับมาดูทันที และพิมพ์เวลา/ขนาดไฟล์ไว้เป็นหลักฐาน
+                # (ตัวตัดสินจริงคือ verify() ใน main ซึ่งอ่านไฟล์เหมือนที่แดชบอร์ดอ่าน)
+                if os.path.basename(p) == os.path.basename(VERIFY[0]):
+                    time.sleep(1)
+                    st_ = os.stat(p)
+                    on_disk = _saved_canary(p, VERIFY[1], VERIFY[2])
+                    print(f"  ไฟล์หลังเซฟ: {time.strftime('%H:%M:%S', time.localtime(st_.st_mtime))} "
+                          f"{st_.st_size:,} B · ช่องสูตรแถวสุดท้ายบนดิสก์: "
+                          f"{'มีค่า' if on_disk else 'ว่าง' if on_disk is False else 'อ่านไม่ได้'}")
+                    if on_disk is False:
+                        computed = False
+                if computed is True:
+                    print(f"  คำนวณและเซฟแล้ว: {os.path.basename(p)}")
+                elif computed is None:
+                    ok = False
+                    print(f"  เซฟแล้ว แต่ยืนยันค่าในช่องสูตรไม่ได้ (ดูเหตุผลบรรทัดบน): "
+                          f"{os.path.basename(p)}")
+                else:
+                    ok = False
+                    print(f"  เซฟแล้วแต่ค่าในช่องสูตรยังว่าง: {os.path.basename(p)}")
+                break
+            except Exception as e:
+                if attempt == RETRIES:
+                    ok = False
+                    print(f"  ผิดพลาด {os.path.basename(p)} หลังลอง {RETRIES} ครั้ง: {e}")
+                else:
+                    wait = 5 * attempt
+                    print(f"  เปิดไม่ได้ (น่าจะ OneDrive กำลังซิงก์) รอ {wait} วิ "
+                          f"แล้วลองครั้งที่ {attempt + 1}/{RETRIES} ({os.path.basename(p)})")
+                    time.sleep(wait)
     finally:
         # ต้องปิด Excel ให้ได้เสมอ ถ้าเหลือค้างไว้ มันจะถือไฟล์แล้วทำให้
         # รอบถัดไปสั่งงานไม่ได้ และแดชบอร์ดอ่านช่องสูตรได้เป็นค่าว่าง
@@ -233,6 +245,28 @@ def recalc(paths) -> bool:
     return ok
 
 
+def _read_sheet_retry(path: str, sheet: str):
+    """อ่านชีตด้วย pandas โดยรอให้ไฟล์ถูกปล่อยก่อน
+
+    หลัง Excel เซฟแล้วปิด OneDrive จะคว้าไฟล์ไปอัปโหลดทันที ช่วงนั้นเปิดอ่านจะได้
+    PermissionError ทั้งที่ไฟล์ปกติดี (5 พ.ย. 2569 ล้มแบบนี้ 2 รอบติด ทั้งที่เซฟสำเร็จ)
+    จึงลองซ้ำทุก 3 วิ ราวหนึ่งนาทีก่อนยอมแพ้
+    """
+    import pandas as pd
+    last = None
+    for attempt in range(20):
+        try:
+            return pd.read_excel(path, sheet_name=sheet, engine="calamine")
+        except PermissionError as e:
+            last = e
+            if attempt == 0:
+                print("  ไฟล์ถูกถือไว้ (OneDrive/Excel) — รอให้ปล่อยก่อนอ่าน", end="", flush=True)
+            print(".", end="", flush=True)
+            time.sleep(3)
+    print()
+    raise last
+
+
 def verify() -> bool:
     """เปิดไฟล์ด้วย pandas แล้วดูว่าช่องสูตรมีค่าจริงไหม"""
     import pandas as pd
@@ -240,7 +274,11 @@ def verify() -> bool:
     path = os.path.join(DEPT_DIR, rel)
     if not os.path.exists(path):
         return True
-    df = pd.read_excel(path, sheet_name=sheet, engine="calamine")
+    try:
+        df = _read_sheet_retry(path, sheet)
+    except PermissionError as e:
+        print(f"\n  ตรวจผลไม่ได้ ไฟล์ยังถูกถือไว้: {e}")
+        return False
     if col not in df.columns:
         print(f"  ตรวจไม่ได้ ไม่พบคอลัมน์ {col}")
         return True
@@ -275,7 +313,7 @@ def export_parquet() -> bool:
         print("  ข้าม export parquet: ไม่พบไฟล์ OEE")
         return True
     try:
-        df = pd.read_excel(src, sheet_name="Report1", engine="calamine")
+        df = _read_sheet_retry(src, "Report1")
 
         # MOS เก็บ Trans_date ปนกัน บางแถวเป็นวันที่จริง บางแถวเป็นข้อความ
         # parquet รับคอลัมน์ที่มีสองชนิดไม่ได้ ต้องแปลงให้เป็นชนิดเดียวก่อน
