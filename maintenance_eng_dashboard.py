@@ -20,7 +20,7 @@ import data_paths
 # ---------------------------------------------------------------------------
 # แหล่งข้อมูล + ค่าคงที่
 # ---------------------------------------------------------------------------
-DEPT_DIR = r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD\ฝ่ายซ่อมบำรุงรักษา"
+DEPT_DIR = data_paths.DEPT_DIR
 MTBF_PATH = os.path.join(DEPT_DIR, r"2.เรื่องMTBF-MTTR\รายละเอียด\MTBF-MTTR_ฐานข้อมูลหลัก_2569.xlsx")
 OEE_PATH = os.path.join(DEPT_DIR, r"3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx")
 # หาโฟลเดอร์ใบแจ้งซ่อมเอง ไม่ฝังชื่อโฟลเดอร์ไว้ในโค้ด (ดู data_paths.py)

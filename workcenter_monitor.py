@@ -42,29 +42,17 @@ st.set_page_config(
 auth.check_login("Workcenter Monitoring — ศูนย์ปฏิบัติการเครื่องจักร")
 
 # โฟลเดอร์ฐานข้อมูลเดิมบน OneDrive (ไฟล์ดิบวางที่ 00_ข้อมูลดิบ_MOS แทนแล้ว)
-DATA_DIR = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา\9.workcenter operation"
-)
+DATA_DIR = os.path.join(data_paths.DEPT_DIR, r"9.workcenter operation")
 
 # ไฟล์ฐานเดิม เก็บไว้เพื่อดูเวลาแก้ไขเท่านั้น ข้อมูลจริงอ่านจาก parquet ที่ ETL สร้าง
 MASTER_PATH = os.path.join(DATA_DIR, "Workcenter_ฐานข้อมูลหลัก_2569.xlsx")
 
 # ฐานข้อมูลหลักของฝ่ายซ่อมบำรุง — แอปเฝ้าดูไฟล์พวกนี้ด้วย อัปเดตเมื่อไรรีเฟรชเอง
-MTBF_PATH = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา\2.เรื่องMTBF-MTTR\รายละเอียด\MTBF-MTTR_ฐานข้อมูลหลัก_2569.xlsx"
-)
-OEE_PATH = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา\3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx"
-)
+MTBF_PATH = os.path.join(data_paths.DEPT_DIR, r"2.เรื่องMTBF-MTTR\รายละเอียด\MTBF-MTTR_ฐานข้อมูลหลัก_2569.xlsx")
+OEE_PATH = os.path.join(data_paths.DEPT_DIR, r"3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx")
 
 # ทะเบียนเครื่องจักร — ชื่อรุ่น วันติดตั้ง อายุ สถานที่ รอบ PM สถานะ
-REGISTRY_PATH = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา\5.งานทะเบียนเครื่องจักร\ทะเบียนเครื่องจักร_DataMaster_2569.xlsx"
-)
+REGISTRY_PATH = os.path.join(data_paths.DEPT_DIR, r"5.งานทะเบียนเครื่องจักร\ทะเบียนเครื่องจักร_DataMaster_2569.xlsx")
 # ใบงานซ่อมย้อนหลัง 2020-2026 — ค่าใช้จ่าย PM/BM Electric/Mechanical Module
 # หาโฟลเดอร์เอง ไม่ฝังชื่อโฟลเดอร์ไว้ในโค้ด (ดู data_paths.py)
 REPAIR_PATH = os.path.join(data_paths.repair_dir(),

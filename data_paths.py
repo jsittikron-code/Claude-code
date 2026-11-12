@@ -28,10 +28,44 @@ import functools
 import glob
 import os
 
-DEPT_DIR = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา"
-)
+HERE = os.path.dirname(os.path.abspath(__file__))
+# ไฟล์ตั้งค่าโฟลเดอร์ฝ่าย (บรรทัดเดียว = path เต็ม) — ใช้เมื่อเครื่องนั้น sync
+# OneDrive/SharePoint มาไว้ที่อื่นจนหาเองไม่เจอ ไม่เข้า git เพราะแต่ละเครื่องต่างกัน
+DEPT_DIR_FILE = os.path.join(HERE, "data_folder.txt")
+DEPT_TAIL = os.path.join("Cue_IE_PD", "ฝ่ายซ่อมบำรุงรักษา")
+
+
+def _find_dept_dir() -> str:
+    """หาโฟลเดอร์ฝ่ายบนเครื่องที่รันอยู่ — โค้ดชุดเดียวใช้ได้ทุกบัญชี Windows
+
+    เดิมฝังโปรไฟล์ผู้ใช้คนเดียวไว้ตายตัว พอคนอื่น clone ไปรันบนเครื่องตัวเอง
+    ทุกแดชบอร์ดหาข้อมูลไม่เจอ ลำดับการหา
+      1. ตัวแปรสภาพแวดล้อม IE_DEPT_DIR
+      2. ไฟล์ data_folder.txt ข้างโค้ด
+      3. OneDrive ของบริษัทในโปรไฟล์ผู้ใช้ที่รันอยู่ (OneDrive - Modernform*)
+    ไม่เจอเลยก็คืนตำแหน่งที่น่าจะเป็น ให้ข้อความ error ปลายทางบอก path ที่ไปหา
+    """
+    env = os.environ.get("IE_DEPT_DIR", "").strip().strip('"')
+    if env:
+        return env
+    try:
+        with open(DEPT_DIR_FILE, encoding="utf-8-sig") as f:
+            txt = f.readline().strip().strip('"')
+        if txt:
+            return txt
+    except OSError:
+        pass
+    roots = [os.environ.get("OneDriveCommercial", "")]
+    roots += sorted(glob.glob(os.path.join(os.path.expanduser("~"),
+                                           "OneDrive - Modernform*")))
+    for r in roots:
+        if r and os.path.isdir(os.path.join(r, DEPT_TAIL)):
+            return os.path.join(r, DEPT_TAIL)
+    return os.path.join(os.path.expanduser("~"),
+                        "OneDrive - Modernform Tower Co Ltd", DEPT_TAIL)
+
+
+DEPT_DIR = _find_dept_dir()
 
 # ไฟล์ตัวแทนของแต่ละชุดข้อมูล ใช้เป็นหมุดสำหรับหาโฟลเดอร์
 ANCHOR_REPAIR = "รายงานซ่อมบำรุง_เครื่อง_2020-2026.xlsx"

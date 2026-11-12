@@ -26,6 +26,8 @@ import shutil
 import subprocess
 import sys
 
+import data_paths
+
 # git hook เรียกสคริปต์นี้โดยไม่ได้ตั้ง encoding ให้ คอนโซลจึงพิมพ์ภาษาไทยไม่ได้
 # และโยน UnicodeEncodeError ทั้งที่งานสำรองสำเร็จไปแล้ว จึงบังคับ UTF-8 ที่นี่เลย
 for _s in (sys.stdout, sys.stderr):
@@ -35,10 +37,7 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 PROJ = os.path.dirname(os.path.abspath(__file__))
-DEST = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา\_backup_โค้ดแดชบอร์ด"
-)
+DEST = os.path.join(data_paths.DEPT_DIR, r"_backup_โค้ดแดชบอร์ด")
 KEEP = 10
 NAME = "Claude-code"
 

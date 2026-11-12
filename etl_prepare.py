@@ -25,10 +25,9 @@ import re
 import shutil
 import sys
 
-DEPT_DIR = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา"
-)
+import data_paths
+
+DEPT_DIR = data_paths.DEPT_DIR
 RAW_ROOT = os.path.join(DEPT_DIR, "00_ข้อมูลดิบ_MOS")
 DOWNLOADS = os.path.join(os.path.expanduser("~"), "Downloads")
 

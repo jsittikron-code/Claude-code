@@ -31,10 +31,9 @@ import os
 import socket
 import sys
 
-DEPT = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา"
-)
+import data_paths
+
+DEPT = data_paths.DEPT_DIR
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORTS = range(8503, 8512)
 

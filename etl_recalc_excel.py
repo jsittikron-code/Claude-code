@@ -17,6 +17,8 @@ import subprocess
 import sys
 import time
 
+import data_paths
+
 
 def _excel_pids() -> set:
     """หมายเลขโปรเซส EXCEL.EXE ที่กำลังรันอยู่ตอนนี้"""
@@ -28,10 +30,7 @@ def _excel_pids() -> set:
     except Exception:
         return set()
 
-DEPT_DIR = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา"
-)
+DEPT_DIR = data_paths.DEPT_DIR
 
 RETRIES = 6          # จำนวนครั้งที่ลองเปิดไฟล์ด้วย Excel ก่อนยอมแพ้ (ดูเหตุผลใน recalc)
 RECALC_CYCLES = 3    # ทำรอบ เปิด-คำนวณ-เซฟ-ตรวจไฟล์ ซ้ำได้กี่รอบ ถ้าไฟล์ที่เซฟยังว่าง (ดู main)

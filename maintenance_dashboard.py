@@ -31,7 +31,7 @@ FILES = {
 PS_FILE = "วิเคราะห์ปัญหา-สาเหตุ_รายเครื่อง.xlsx"
 
 # ฐานข้อมูลหลักของฝ่าย (ชุดเดียวกับที่ workcenter_monitor.py ใช้) — สำหรับแท็บโปรไฟล์เครื่องจักร
-DEPT_DIR = r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD\ฝ่ายซ่อมบำรุงรักษา"
+DEPT_DIR = data_paths.DEPT_DIR
 REGISTRY_PATH = os.path.join(DEPT_DIR, r"5.งานทะเบียนเครื่องจักร\ทะเบียนเครื่องจักร_DataMaster_2569.xlsx")
 MTBF_PATH = os.path.join(DEPT_DIR, r"2.เรื่องMTBF-MTTR\รายละเอียด\MTBF-MTTR_ฐานข้อมูลหลัก_2569.xlsx")
 OEE_PATH = os.path.join(DEPT_DIR, r"3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx")

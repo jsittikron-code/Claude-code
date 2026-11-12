@@ -30,10 +30,9 @@ import sys
 import openpyxl
 import pandas as pd
 
-DEPT_DIR = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา"
-)
+import data_paths
+
+DEPT_DIR = data_paths.DEPT_DIR
 OEE = os.path.join(DEPT_DIR, r"3.เรื่องOverall Equipment Effectiveness"
                              r"\OEE_ฐานข้อมูลหลัก_2569.xlsx")
 KEEP_BY = "เวลาทำงานจริง/วัน"

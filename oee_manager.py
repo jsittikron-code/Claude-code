@@ -28,6 +28,7 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import data_paths
 
 st.set_page_config(page_title="ระบบบริหาร OEE — Modernform", page_icon="⚙️", layout="wide")
 
@@ -104,16 +105,10 @@ st.markdown(APP_CSS, unsafe_allow_html=True)
 # ---------------------------------------------------------------------------
 # แหล่งข้อมูล
 # ---------------------------------------------------------------------------
-OEE_DIR = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา\3.เรื่องOverall Equipment Effectiveness"
-)
+OEE_DIR = os.path.join(data_paths.DEPT_DIR, r"3.เรื่องOverall Equipment Effectiveness")
 OEE_PATH = os.path.join(OEE_DIR, "OEE_ฐานข้อมูลหลัก_2569.xlsx")
 # ทะเบียนเครื่องจักร — ใช้เสริมชื่อรุ่น/สถานที่ในหน้าเจาะรายเครื่อง (ไม่มีก็ทำงานได้)
-REGISTRY_PATH = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา\5.งานทะเบียนเครื่องจักร\ทะเบียนเครื่องจักร_DataMaster_2569.xlsx"
-)
+REGISTRY_PATH = os.path.join(data_paths.DEPT_DIR, r"5.งานทะเบียนเครื่องจักร\ทะเบียนเครื่องจักร_DataMaster_2569.xlsx")
 # แผนงานปรับปรุงเก็บไว้ข้างตัวแอป (ไม่ไปเขียนทับไฟล์ฐานข้อมูลหลัก)
 PLAN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oee_action_plan.csv")
 

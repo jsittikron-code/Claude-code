@@ -15,7 +15,14 @@
 
 Set sh  = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
-sh.CurrentDirectory = "C:\Users\p\Desktop\Claude-code"
+' โฟลเดอร์โค้ด = โฟลเดอร์ของไฟล์นี้ — clone ไปไว้ที่ไหน บัญชีไหน ก็เปิดได้
+' แต่ถ้าไฟล์นี้ถูก "คัดลอก" ไปไว้ใน Startup (แทนที่จะเป็นทางลัด) โฟลเดอร์ตัวเองจะไม่มีโค้ด
+' จึงถอยไปใช้ Desktop\Claude-code ของผู้ใช้ที่ล็อกอินอยู่
+proj = fso.GetParentFolderName(WScript.ScriptFullName)
+If Not fso.FileExists(proj & "\workcenter_monitor.py") Then
+    proj = sh.ExpandEnvironmentStrings("%USERPROFILE%") & "\Desktop\Claude-code"
+End If
+sh.CurrentDirectory = proj
 
 apps = Array( _
     "workcenter_monitor.py|8503", _

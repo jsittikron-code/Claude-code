@@ -16,11 +16,12 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import data_paths
 
 # ---------------------------------------------------------------------------
 # แหล่งข้อมูล + ค่าคงที่
 # ---------------------------------------------------------------------------
-DEPT_DIR = r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD\ฝ่ายซ่อมบำรุงรักษา"
+DEPT_DIR = data_paths.DEPT_DIR
 OEE_PATH = os.path.join(DEPT_DIR, r"3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx")
 
 TARGET_OEE = 85.0

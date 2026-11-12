@@ -278,14 +278,8 @@ auth.check_login("ระบบบริหารพลังงานโรง�
 # ---------------------------------------------------------------------------
 # แหล่งข้อมูลบน OneDrive — อัปเดตไฟล์แล้วหน้าจอทุกคนรีเฟรชเองภายใน ~30 วินาที
 # ---------------------------------------------------------------------------
-ENERGY_DIR = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD\ฝ่ายซ่อมบำรุงรักษา"
-    r"\4.เรื่องการใช้ปริมาณไฟฟ้าภายในโรงงาน\งานระบบไฟฟ้าโรงงาน"
-)
-OEE_FILE = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD\ฝ่ายซ่อมบำรุงรักษา"
-    r"\3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx"
-)
+ENERGY_DIR = os.path.join(data_paths.DEPT_DIR, r"4.เรื่องการใช้ปริมาณไฟฟ้าภายในโรงงาน\งานระบบไฟฟ้าโรงงาน")
+OEE_FILE = os.path.join(data_paths.DEPT_DIR, r"3.เรื่องOverall Equipment Effectiveness\OEE_ฐานข้อมูลหลัก_2569.xlsx")
 
 # เฉพาะบิลของโรงงาน — บ้านเลขที่ 33/5
 BILL_METERS = {

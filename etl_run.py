@@ -21,11 +21,10 @@ import subprocess
 import sys
 import time
 
+import data_paths
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEPT_DIR = (
-    r"C:\Users\p\OneDrive - Modernform Tower Co Ltd\Cue_IE_PD"
-    r"\ฝ่ายซ่อมบำรุงรักษา"
-)
+DEPT_DIR = data_paths.DEPT_DIR
 UPDATE_MOS = os.path.join(DEPT_DIR, "00_ETL_Pipeline", "update_mos.py")
 
 LINE = "=" * 62
