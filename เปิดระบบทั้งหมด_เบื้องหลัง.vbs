@@ -24,6 +24,15 @@ If Not fso.FileExists(proj & "\workcenter_monitor.py") Then
 End If
 sh.CurrentDirectory = proj
 
+' ถ้ามี .venv (ตัวติดตั้งสร้างให้เมื่อ Python หลักของเครื่องใหม่เกินไป เช่น 3.15)
+' ให้ใช้ Python ในนั้น ไม่งั้นใช้ python ของเครื่องตามเดิม
+venvPy = proj & "\.venv\Scripts\python.exe"
+If fso.FileExists(venvPy) Then
+    pyCmd = """" & venvPy & """"
+Else
+    pyCmd = "cmd /c python"
+End If
+
 apps = Array( _
     "workcenter_monitor.py|8503", _
     "energy_monitor.py|8504", _
@@ -57,7 +66,7 @@ For Each a In apps
     If InStr(listening, ":" & parts(1) & " ") > 0 Then
         skipped = skipped + 1
     Else
-        sh.Run "cmd /c python -m streamlit run """ & parts(0) & _
+        sh.Run pyCmd & " -m streamlit run """ & parts(0) & _
                """ --server.headless true --server.port " & parts(1), 0, False
         started = started + 1
     End If

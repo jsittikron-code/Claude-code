@@ -39,23 +39,96 @@ def step(n: int, title: str) -> None:
     print("-" * 60)
 
 
-def check_python() -> bool:
+# ไลบรารีใน requirements.txt ล็อกเวอร์ชันตามเครื่องที่ใช้งานจริง (Python 3.12)
+# Python ที่ใหม่เกินไปจะไม่มีไฟล์สำเร็จรูป (wheel) ให้ pandas/numpy/pyarrow
+# pip จะพยายามคอมไพล์เองแล้วล้ม เพราะต้องมี Visual Studio
+# (เกิดจริง 18 พ.ย. 2569 เครื่องผู้รับมอบลง Python 3.15 แล้วขึ้น No module named streamlit)
+SUPPORTED = ((3, 12), (3, 13))
+VENV = os.path.join(HERE, ".venv")
+VENV_PY = os.path.join(VENV, "Scripts", "python.exe")
+
+
+def _version_of(cmd: list) -> tuple:
+    """รันคำสั่ง Python แล้วคืน ((major, minor), path) หรือ None ถ้ารันไม่ได้"""
+    try:
+        r = subprocess.run(cmd + ["-c", "import sys;print(sys.version_info[0],sys.version_info[1],sys.executable)"],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return None
+        a, b, path = r.stdout.strip().split(" ", 2)
+        return (int(a), int(b)), path
+    except Exception:
+        return None
+
+
+def _find_supported() -> str:
+    """หา python.exe รุ่น 3.12/3.13 ที่ลงไว้ในเครื่อง คืน path หรือ '' ถ้าไม่เจอ"""
+    la = os.environ.get("LOCALAPPDATA", "")
+    cands = []
+    for mj, mn in SUPPORTED:
+        tag = f"{mj}.{mn}"
+        cands += [["py", f"-V:{tag}"], ["py", f"-{tag}"],
+                  [os.path.join(la, "Programs", "Python", f"Python{mj}{mn}", "python.exe")],
+                  [os.path.join(la, "Python", f"pythoncore-{tag}-64", "python.exe")],
+                  [os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), f"Python{mj}{mn}", "python.exe")]]
+    for c in cands:
+        if len(c) == 1 and not os.path.exists(c[0]):
+            continue
+        got = _version_of(c)
+        if got and got[0] in SUPPORTED:
+            return got[1]
+    return ""
+
+
+def check_python() -> str:
+    """เลือก Python ที่จะใช้กับโปรเจกต์ คืน path ของ python.exe หรือ '' ถ้ายังไม่มีรุ่นที่ใช้ได้
+
+    เครื่องที่ Python หลักเป็น 3.12/3.13 ใช้ตัวนั้นเลยเหมือนเดิม
+    ถ้าใหม่หรือเก่ากว่านั้น สร้าง .venv จาก 3.12/3.13 ไว้ในโฟลเดอร์โค้ด
+    ไฟล์ .bat และ .vbs ทุกตัวจะใช้ .venv เองเมื่อมี — Python หลักของเครื่องไม่ถูกแตะ
+    """
     step(1, "ตรวจ Python")
     v = sys.version_info
-    print(f"  Python {v.major}.{v.minor}.{v.micro}  ({sys.executable})")
-    if (v.major, v.minor) < (3, 12):
-        print("  [x] ต้องใช้ Python 3.12 ขึ้นไป — ลงจาก python.org แล้วติ๊ก 'Add python.exe to PATH'")
-        return False
-    print("  [ok] ใช้ได้")
-    return True
+    print(f"  Python ของเครื่อง: {v.major}.{v.minor}.{v.micro}  ({sys.executable})")
+    if os.path.exists(VENV_PY):
+        got = _version_of([VENV_PY])
+        if got and got[0] in SUPPORTED:
+            print(f"  [ok] ใช้ .venv ในโฟลเดอร์โค้ด (Python {got[0][0]}.{got[0][1]})")
+            return VENV_PY
+        print("  [!] .venv เดิมใช้ไม่ได้ จะสร้างใหม่")
+    if (v.major, v.minor) in SUPPORTED:
+        print("  [ok] ใช้ได้")
+        return sys.executable
+
+    print(f"  [!] โปรเจกต์นี้ใช้ Python 3.12 หรือ 3.13 — รุ่น {v.major}.{v.minor} ยังลงไลบรารีบางตัวไม่ได้")
+    base = _find_supported()
+    if not base:
+        print("  ยังไม่มี Python 3.12 ในเครื่อง")
+        if ask("  ลง Python 3.12 ตอนนี้ไหม (ใช้คำสั่ง py install 3.12 ของ Python install manager)"):
+            subprocess.run(["py", "install", "3.12"])
+            base = _find_supported()
+        if not base:
+            print("  [x] ยังไม่เจอ Python 3.12 — ลงจาก python.org (Windows installer 64-bit ของ 3.12)")
+            print("      ติ๊ก 'Add python.exe to PATH' แล้วรัน ติดตั้งเครื่องใหม่.bat อีกครั้ง")
+            print("      Python รุ่นเดิมของเครื่องไม่ต้องลบ ลงคู่กันได้")
+            return ""
+    print(f"  เจอ Python ที่ใช้ได้: {base}")
+    print("  สร้าง .venv ในโฟลเดอร์โค้ด ...")
+    r = subprocess.run([base, "-m", "venv", VENV])
+    if r.returncode != 0 or not os.path.exists(VENV_PY):
+        print("  [x] สร้าง .venv ไม่สำเร็จ — อ่านข้อความด้านบน")
+        return ""
+    print("  [ok] สร้าง .venv แล้ว ปุ่ม .bat และ .vbs ทุกตัวจะใช้ Python ในนี้เอง")
+    return VENV_PY
 
 
-def install_packages() -> None:
+def install_packages(py: str) -> None:
     step(2, "ลงไลบรารี (requirements.txt)")
     if not ask("  ลง/อัปเดตไลบรารีตอนนี้ไหม (ใช้เน็ต ประมาณ 2-5 นาที)"):
         print("  ข้าม")
         return
-    r = subprocess.run([sys.executable, "-m", "pip", "install", "-r",
+    subprocess.run([py, "-m", "pip", "install", "--upgrade", "pip"])
+    r = subprocess.run([py, "-m", "pip", "install", "-r",
                         os.path.join(HERE, "requirements.txt")])
     print("  [ok] ลงครบ" if r.returncode == 0 else "  [x] ลงไม่สำเร็จ — อ่านข้อความด้านบน")
 
@@ -121,9 +194,10 @@ def main() -> None:
     print("  ติดตั้งระบบแดชบอร์ดฝ่ายซ่อมบำรุงบนเครื่องนี้")
     print(f"  โฟลเดอร์โค้ด: {HERE}")
     print("=" * 60)
-    if not check_python():
+    py = check_python()
+    if not py:
         return
-    install_packages()
+    install_packages(py)
     setup_data_folder()
     check_users()
     make_startup_link()
