@@ -95,10 +95,20 @@ def check_login(app_title: str = "") -> bool:
 
     creds, legacy = _load_credentials()
     if not creds:
+        # บอกที่อยู่เต็มที่โปรแกรมมองหา — คนรับช่วงมักวางไฟล์ผิดโฟลเดอร์
+        # หรือ Windows ต่อท้ายชื่อเป็น secrets.toml.txt โดยไม่เห็นนามสกุล (เจอจริง 18 พ.ย. 2569)
+        import glob
+        import os
+        want = os.path.join(os.getcwd(), ".streamlit", "secrets.toml")
+        near = [os.path.basename(p) for p in glob.glob(os.path.join(os.getcwd(), ".streamlit", "secrets*"))]
+        hint = (f"ในโฟลเดอร์ `.streamlit` มีไฟล์: `{', '.join(near)}` — ชื่อต้องเป็น `secrets.toml` พอดี"
+                if near else
+                "ยังไม่มีไฟล์นี้ (หรือยังไม่มีโฟลเดอร์ `.streamlit`) ในโฟลเดอร์โค้ด")
         st.error(
             "ไม่พบข้อมูลผู้ใช้ในไฟล์ `.streamlit/secrets.toml`\n\n"
-            "สร้างผู้ใช้ด้วยการรัน `python manage_users.py` "
-            "(หรือดับเบิลคลิก `จัดการผู้ใช้.bat`)"
+            f"โปรแกรมมองหาที่: `{want}`\n\n{hint}\n\n"
+            "วางไฟล์ secrets.toml จากเครื่องเดิมไว้ที่นั่น แล้วกดรีเฟรชหน้านี้ "
+            "หรือสร้างผู้ใช้ใหม่ด้วยการดับเบิลคลิก `จัดการผู้ใช้.bat`"
         )
         st.stop()
 
