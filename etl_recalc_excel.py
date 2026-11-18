@@ -122,13 +122,82 @@ def recalc(paths) -> bool:
         if not os.path.exists(p):
             print(f"  ข้าม ไม่พบไฟล์: {os.path.basename(p)}")
             continue
-        # เปิด Excel ใหม่ "คนละอินสแตนซ์ต่อไฟล์"
-        # 5 พ.ย. 2569: อินสแตนซ์ที่เพิ่งเซฟไฟล์ MTBF (อยู่ใน OneDrive) จะยุ่งอยู่นานกว่า
-        # 75 วิ ตอบทุกคำสั่งว่า 'Call was rejected by callee' ทำให้เปิดไฟล์ OEE ไม่ได้
-        # ทั้ง 4 รอบ ทั้งที่ไฟล์ปกติ (เปิดเดี่ยว ๆ ได้ใน 1 วิ) — แยกอินสแตนซ์แล้วไม่ติดกัน
-        if not _recalc_one(win32, p):
+        # ให้ Excel ทำงานกับ "สำเนาในเครื่อง" ไม่ใช่ไฟล์ใน OneDrive โดยตรง
+        #
+        # 18 พ.ย. 2569: Excel เปิดไฟล์ MTBF ใน OneDrive ไม่ได้ 4 ครั้ง พอครั้งที่ 5 เปิดได้
+        # กลับได้รุ่นเก่าของวันที่ 5 พ.ย. (Office ดึงจากแคชของ OneDrive แทนไฟล์ที่ขั้น 3
+        # เพิ่งเขียน) แล้วเซฟทับ แถวเหตุการณ์ 5–17 พ.ย. หายทั้งหมด โดย log ยังบอกว่าเรียบร้อย
+        # สำเนาที่อยู่นอก OneDrive ไม่มีแคชหรือรุ่นบนคลาวด์ให้ Excel สับสน
+        # และก่อนวางกลับ ตรวจว่าทุกชีตมีแถวไม่น้อยกว่าก่อนเปิด ถ้าน้อยลง = ไม่วางกลับ
+        #
+        # เปิด Excel ใหม่คนละอินสแตนซ์ต่อไฟล์ด้วย (5 พ.ย. 2569: อินสแตนซ์ที่เพิ่งเซฟไฟล์
+        # หนึ่งยุ่งนานกว่า 75 วิ ตอบ 'Call was rejected by callee' ทำให้เปิดไฟล์ถัดไปไม่ได้)
+        if not _recalc_via_local_copy(win32, p):
             ok = False
     return ok
+
+
+def _sheet_rows(path: str) -> dict:
+    """จำนวนแถวของทุกชีต (อ่านจากไฟล์บนดิสก์) ใช้จับว่าไฟล์ถูกเซฟทับด้วยรุ่นเก่า"""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, read_only=True)
+    try:
+        return {ws.title: (ws.max_row or 0) for ws in wb.worksheets}
+    finally:
+        wb.close()
+
+
+def _recalc_via_local_copy(win32, p: str) -> bool:
+    import shutil
+    import tempfile
+    name = os.path.basename(p)
+    work_dir = os.path.join(tempfile.gettempdir(), "etl_recalc_excel")
+    os.makedirs(work_dir, exist_ok=True)
+    work = os.path.join(work_dir, name)
+    try:
+        before = _sheet_rows(p)
+        shutil.copy2(p, work)
+    except Exception as e:
+        print(f"  *** คัดลอกไฟล์มาทำงานไม่ได้ ({name}): {e}")
+        return False
+
+    ok = _recalc_one(win32, work)
+
+    # ไฟล์ที่ Excel เซฟต้องมีแถวครบทุกชีตเท่ากับก่อนเปิด (สูตรเพิ่มได้ แถวห้ามหาย)
+    try:
+        after = _sheet_rows(work)
+    except Exception as e:
+        print(f"  *** อ่านไฟล์ที่ Excel เซฟไม่ได้ ({name}): {e} — ไม่วางกลับ ไฟล์เดิมใน OneDrive ไม่ถูกแตะ")
+        return False
+    lost = {s: (before[s], after.get(s, 0)) for s in before if after.get(s, 0) < before[s]}
+    if lost:
+        print(f"  *** ไฟล์ที่ Excel เซฟมีแถวน้อยกว่าก่อนเปิด — ไม่วางกลับ ไฟล์เดิมใน OneDrive ไม่ถูกแตะ ({name})")
+        for s, (b, a) in lost.items():
+            print(f"      ชีต {s}: ก่อน {b:,} แถว · หลัง {a:,} แถว")
+        return False
+    if not ok:
+        # Excel ล้มหรือช่องสูตรยังว่าง ไฟล์ใน OneDrive ยังเป็นของที่ขั้น 3 เขียนไว้ครบ
+        return False
+
+    # วางกลับ: คัดลอกเป็นไฟล์ชั่วคราวข้างไฟล์จริงก่อน แล้วสลับทีเดียว
+    tmp = p + ".recalc.tmp"
+    for attempt in range(10):
+        try:
+            shutil.copy2(work, tmp)
+            os.replace(tmp, p)
+            return True
+        except PermissionError:
+            time.sleep(3)
+        except Exception as e:
+            print(f"  *** วางไฟล์กลับไม่สำเร็จ ({name}): {e}")
+            break
+    try:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    except OSError:
+        pass
+    print(f"  *** วางไฟล์ที่คำนวณแล้วกลับเข้า OneDrive ไม่ได้ ({name}) — ไฟล์ถูกถือไว้ ลองรันใหม่อีกครั้ง")
+    return False
 
 
 def _recalc_one(win32, p: str) -> bool:
