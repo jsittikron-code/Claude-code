@@ -141,6 +141,13 @@ def setup_data_folder() -> None:
         print(f"  [ok] เจอแล้ว: {data_paths.DEPT_DIR}")
         return
     print(f"  [x] ไม่เจอที่ {data_paths.DEPT_DIR}")
+    # แยกกรณี "ยังไม่ได้ล็อกอิน OneDrive บริษัทเลย" ออกมา — เจอจริงที่คอมห้องช่าง 20 พ.ย. 2569
+    # เครื่องมีแค่ OneDrive - Personal คนกดตามคำแนะนำเรื่อง shortcut ก็ไม่มีวันเจอ
+    import glob
+    if not (os.environ.get("OneDriveCommercial")
+            or glob.glob(os.path.join(os.path.expanduser("~"), "OneDrive - Modernform*"))):
+        print("  เครื่องนี้ยังไม่ได้ล็อกอิน OneDrive ของบริษัท (มีแค่ OneDrive ส่วนตัวหรือไม่มีเลย)")
+        print("  ไอคอนเมฆมุมขวาล่าง > Settings > Account > Add an account > ล็อกอินอีเมล @modernform.co.th")
     print("  วิธีแก้: ขอสิทธิ์โฟลเดอร์ Cue_IE_PD แล้วใน OneDrive บนเว็บกด 'Add shortcut to My files'")
     print("         รอ sync เสร็จแล้วรันไฟล์นี้ใหม่ หรือวาง path โฟลเดอร์ 'ฝ่ายซ่อมบำรุงรักษา' ด้านล่าง")
     p = input("  path (เว้นว่าง = ข้าม): ").strip().strip('"')
@@ -154,7 +161,7 @@ def setup_data_folder() -> None:
     print(f"  [ok] บันทึกลง {os.path.basename(DATA_FILE)} แล้ว")
 
 
-def check_users() -> None:
+def check_users(py: str) -> None:
     step(4, "ผู้ใช้สำหรับล็อกอินแดชบอร์ด")
     if os.path.exists(SECRETS):
         print("  [ok] มีไฟล์ผู้ใช้แล้ว (.streamlit/secrets.toml)")
@@ -163,7 +170,9 @@ def check_users() -> None:
     print("  ทางเลือก: ขอไฟล์ secrets.toml จากคนดูแลเดิมมาวางที่โฟลเดอร์ .streamlit")
     print("           หรือสร้างผู้ใช้ใหม่ตอนนี้")
     if ask("  สร้างผู้ใช้ใหม่ตอนนี้ไหม"):
-        subprocess.run([sys.executable, os.path.join(HERE, "manage_users.py")], cwd=HERE)
+        # ต้องใช้ Python ตัวเดียวกับที่ลงไลบรารีไว้ (อาจเป็น .venv) — manage_users import streamlit
+        # ผ่าน auth.py ถ้าใช้ Python ของเครื่องจะล้มด้วย No module named 'streamlit'
+        subprocess.run([py, os.path.join(HERE, "manage_users.py")], cwd=HERE)
 
 
 def make_startup_link() -> None:
@@ -199,7 +208,7 @@ def main() -> None:
         return
     install_packages(py)
     setup_data_folder()
-    check_users()
+    check_users(py)
     make_startup_link()
     start_now()
     print("\nขั้นต่อไป")
