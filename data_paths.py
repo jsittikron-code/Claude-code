@@ -34,7 +34,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEPT_DIR_FILE = os.path.join(HERE, "data_folder.txt")
 DEPT_TAIL = os.path.join("Cue_IE_PD", "ฝ่ายซ่อมบำรุงรักษา")
 # ถ้าเจ้าของแชร์มาแค่โฟลเดอร์ฝ่าย (ไม่ใช่ทั้ง Cue_IE_PD) ทางลัดจะอยู่ที่รากของ OneDrive เลย
-DEPT_TAILS = (DEPT_TAIL, "ฝ่ายซ่อมบำรุงรักษา")
+# และ OneDrive ตั้งชื่อทางลัดบนดิสก์เป็น "<ชื่อเจ้าของ>'s files - <ชื่อโฟลเดอร์>"
+# (เจอจริงที่คอมห้องช่าง 20 พ.ย. 2569: "Sitikron Jetjoho's files - ฝ่ายซ่อมบำรุงรักษา")
+DEPT_TAILS = (DEPT_TAIL, "ฝ่ายซ่อมบำรุงรักษา", "* - ฝ่ายซ่อมบำรุงรักษา")
 
 
 def _find_dept_dir() -> str:
@@ -62,8 +64,9 @@ def _find_dept_dir() -> str:
                                            "OneDrive - Modernform*")))
     for r in roots:
         for tail in DEPT_TAILS:
-            if r and os.path.isdir(os.path.join(r, tail)):
-                return os.path.join(r, tail)
+            for d in sorted(glob.glob(os.path.join(glob.escape(r), tail))) if r else ():
+                if os.path.isdir(d):
+                    return d
     return os.path.join(os.path.expanduser("~"),
                         "OneDrive - Modernform Tower Co Ltd", DEPT_TAIL)
 
