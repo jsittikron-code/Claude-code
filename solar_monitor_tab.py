@@ -512,7 +512,9 @@ def _flow_svg(row, t: pd.Timestamp, day_pac: pd.DataFrame, inv_label: str, n_out
              f'<text x="128" y="40" font-size="15" fill="{mute}">{t:%d/%m/%Y} · {inv_label}</text>'
              f'<circle cx="136" cy="58" r="6" fill="{st_col}" class="sg"/>'
              f'<text x="148" y="63" font-size="14" font-weight="700" fill="{st_col}">{st_txt}</text>')
-    eff = pac / pdc * 100 if pdc > 1 else None
+    # AC เกิน DC เป็นไปไม่ได้ทางฟิสิกส์ — เกิดเมื่อ logger อ่าน DC กับ AC คนละจังหวะตอนแดดเปลี่ยนเร็ว
+    # (เคยขึ้น 183%) เฟรมแบบนั้นไม่แสดงตัวเลข ดีกว่าแสดงค่าที่ผิด
+    eff = pac / pdc * 100 if pdc > 1 and pac <= pdc * 1.005 else None
     eday = float(row["eday_kwh"]) if have and pd.notna(row.get("eday_kwh")) else None
     kpis = [("DC ขาเข้า", f"{pdc:.1f} kW", COLOR_SOLAR), ("AC ขาออก", f"{pac:.1f} kW", COLOR_GRID2),
             ("ประสิทธิภาพ", f"{eff:.1f} %" if eff else "—", "#22c55e"),

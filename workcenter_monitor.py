@@ -2450,7 +2450,10 @@ with tab_profile:
             & (mc_rows["Start"] <= last_end) & (mc_rows["End"] >= last_end)
         ]
 
-        if not open_repair.empty:
+        # งานซ่อมที่เป็นกิจกรรมสุดท้ายนับว่า "ยังซ่อมอยู่" เฉพาะเมื่อเพิ่งเกิด (ไม่เกิน 1 วันจากวันล่าสุดของฐาน)
+        # ใบ BP ทุกใบมีเวลาปิด ถ้าหลังจากนั้นเครื่องเงียบไปหลายวัน แปลว่าซ่อมจบแล้วแต่ไม่มีงานผลิต
+        # (DL-64: ช่างซ่อม 9 นาทีเมื่อ 20/10 แล้วป้ายขึ้น "อยู่ระหว่างซ่อม" ค้างอีก 13 วัน)
+        if not open_repair.empty and gap_days <= 1:
             st_txt, st_color, st_icon = "หยุดเครื่อง (อยู่ระหว่างซ่อม)", STATUS_COLORS[STATUS_DOWN], "🔴"
             st_note = str(open_repair.iloc[-1]["สาเหตุ"])
             st_3d = ("red", "stop")
@@ -2465,6 +2468,9 @@ with tab_profile:
         else:
             st_txt, st_color, st_icon = f"ไม่ได้เดินเครื่องมา {gap_days} วัน", STATUS_COLORS[STATUS_NODATA], "⚪"
             st_note = "ควรตรวจสอบว่าเครื่องหยุดใช้งาน ย้ายไลน์ หรือรอซ่อม"
+            if not open_repair.empty:
+                st_note = (f"กิจกรรมสุดท้ายคืองานซ่อม ปิดเมื่อ {last_end:%d/%m/%Y %H:%M} "
+                           "แล้วไม่มีงานผลิตต่อ — ตรวจว่าซ่อมจบจริงหรือเครื่องยังใช้ไม่ได้")
             st_3d = ("grey", "stop")
         _show_3d(st_txt, *st_3d)
 
