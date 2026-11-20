@@ -148,7 +148,8 @@ def setup_data_folder() -> None:
             or glob.glob(os.path.join(os.path.expanduser("~"), "OneDrive - Modernform*"))):
         print("  เครื่องนี้ยังไม่ได้ล็อกอิน OneDrive ของบริษัท (มีแค่ OneDrive ส่วนตัวหรือไม่มีเลย)")
         print("  ไอคอนเมฆมุมขวาล่าง > Settings > Account > Add an account > ล็อกอินอีเมล @modernform.co.th")
-    print("  วิธีแก้: ขอสิทธิ์โฟลเดอร์ Cue_IE_PD แล้วใน OneDrive บนเว็บกด 'Add shortcut to My files'")
+    print("  วิธีแก้: ขอสิทธิ์โฟลเดอร์ ฝ่ายซ่อมบำรุงรักษา (หรือ Cue_IE_PD ทั้งโฟลเดอร์)")
+    print("         แล้วใน OneDrive บนเว็บ > Shared > กด 'Add shortcut to My files'")
     print("         รอ sync เสร็จแล้วรันไฟล์นี้ใหม่ หรือวาง path โฟลเดอร์ 'ฝ่ายซ่อมบำรุงรักษา' ด้านล่าง")
     p = input("  path (เว้นว่าง = ข้าม): ").strip().strip('"')
     if not p:

@@ -33,6 +33,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # OneDrive/SharePoint มาไว้ที่อื่นจนหาเองไม่เจอ ไม่เข้า git เพราะแต่ละเครื่องต่างกัน
 DEPT_DIR_FILE = os.path.join(HERE, "data_folder.txt")
 DEPT_TAIL = os.path.join("Cue_IE_PD", "ฝ่ายซ่อมบำรุงรักษา")
+# ถ้าเจ้าของแชร์มาแค่โฟลเดอร์ฝ่าย (ไม่ใช่ทั้ง Cue_IE_PD) ทางลัดจะอยู่ที่รากของ OneDrive เลย
+DEPT_TAILS = (DEPT_TAIL, "ฝ่ายซ่อมบำรุงรักษา")
 
 
 def _find_dept_dir() -> str:
@@ -59,8 +61,9 @@ def _find_dept_dir() -> str:
     roots += sorted(glob.glob(os.path.join(os.path.expanduser("~"),
                                            "OneDrive - Modernform*")))
     for r in roots:
-        if r and os.path.isdir(os.path.join(r, DEPT_TAIL)):
-            return os.path.join(r, DEPT_TAIL)
+        for tail in DEPT_TAILS:
+            if r and os.path.isdir(os.path.join(r, tail)):
+                return os.path.join(r, tail)
     return os.path.join(os.path.expanduser("~"),
                         "OneDrive - Modernform Tower Co Ltd", DEPT_TAIL)
 
