@@ -13,7 +13,8 @@
   3. หาโฟลเดอร์ข้อมูลฝ่ายบน OneDrive (ไม่เจอให้วาง path แล้วบันทึกลง data_folder.txt)
   4. ตรวจไฟล์ผู้ใช้ .streamlit/secrets.toml
   5. สร้างทางลัดใน Startup ให้ระบบเปิดเองตอนล็อกอิน
-  6. เปิดระบบทั้งหมดตอนนี้
+  6. สร้างไอคอนงานประจำบนหน้าจอ (อัปเดต MOS / Solar, ตรวจสุขภาพ, เปิดระบบ)
+  7. เปิดระบบทั้งหมดตอนนี้
 
 กดซ้ำได้ปลอดภัย ขั้นไหนทำแล้วจะบอกว่าเรียบร้อยแล้วข้ามไป
 """
@@ -35,7 +36,7 @@ def ask(q: str) -> bool:
 
 
 def step(n: int, title: str) -> None:
-    print(f"\n[{n}/6] {title}")
+    print(f"\n[{n}/7] {title}")
     print("-" * 60)
 
 
@@ -192,8 +193,51 @@ def make_startup_link() -> None:
           else "  [x] สร้างไม่สำเร็จ")
 
 
+# ไอคอนงานประจำบนหน้าจอ — ชื่อและรูปเดียวกับเครื่องเดิม คนรับช่วงดูคู่มือ/สไลด์แล้วหาเจอทันที
+# (ชื่อไอคอน, ไฟล์ที่เรียก, รูปไอคอน "ไฟล์,ลำดับ" — ว่าง = รูปตั้งต้นของ Windows)
+DESKTOP_ICONS = (
+    ("อัปเดตข้อมูล MOS", "อัปเดตข้อมูล MOS.bat", "shell32.dll,146"),
+    ("อัปเดตข้อมูล Solar", "อัปเดต Solar.bat", os.path.join(HERE, "assets", "solar_update.ico") + ",0"),
+    ("ตรวจสุขภาพระบบ", "ตรวจสุขภาพระบบ.bat", ""),
+    ("เปิดระบบแดชบอร์ด", "เปิดระบบทั้งหมด_เบื้องหลัง.vbs", ""),
+)
+
+
+def _desktop_dir() -> str:
+    """โฟลเดอร์ Desktop จริงของผู้ใช้ — ถาม Windows เพราะบางเครื่อง OneDrive ย้าย Desktop ไปไว้ที่อื่น"""
+    ps = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;[Environment]::GetFolderPath('Desktop')"
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=30)
+        d = r.stdout.decode("utf-8", "replace").strip()
+    except (OSError, subprocess.TimeoutExpired):
+        d = ""
+    return d if d and os.path.isdir(d) else os.path.join(os.path.expanduser("~"), "Desktop")
+
+
+def make_desktop_icons() -> None:
+    step(6, "ไอคอนงานประจำบนหน้าจอ")
+    desk = _desktop_dir()
+    todo = [i for i in DESKTOP_ICONS if not os.path.exists(os.path.join(desk, i[0] + ".lnk"))]
+    if not todo:
+        print(f"  [ok] มีไอคอนครบแล้ว ({len(DESKTOP_ICONS)} อัน) ที่ {desk}")
+        return
+    print("  จะสร้าง: " + " · ".join(i[0] for i in todo))
+    print("  ไอคอนอัปเดตทำงานเฉพาะบนเครื่องอัปเดตข้อมูล เครื่องอื่นกดแล้วขึ้นข้อความ ไม่แตะข้อมูล")
+    if not ask("  สร้างไอคอนบนหน้าจอไหม"):
+        print("  ข้าม — ไฟล์ทั้งหมดดับเบิลคลิกจากโฟลเดอร์โค้ดได้เหมือนกัน")
+        return
+    ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK);"
+          "$s.TargetPath=$env:TARGET;$s.WorkingDirectory=$env:HERE;"
+          "if($env:ICON){$s.IconLocation=$env:ICON};$s.Save()")
+    for name, target, icon in todo:
+        lnk = os.path.join(desk, name + ".lnk")
+        env = dict(os.environ, LNK=lnk, TARGET=os.path.join(HERE, target), HERE=HERE, ICON=icon)
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], env=env)
+        print(f"  [ok] {name}" if r.returncode == 0 and os.path.exists(lnk) else f"  [x] {name} — สร้างไม่สำเร็จ")
+
+
 def start_now() -> None:
-    step(6, "เปิดระบบตอนนี้")
+    step(7, "เปิดระบบตอนนี้")
     if ask("  เปิดแดชบอร์ดทั้ง 9 ระบบตอนนี้ไหม"):
         subprocess.Popen(["wscript.exe", VBS], cwd=HERE)
         print("  สั่งเปิดแล้ว รอ ~40 วินาที แล้วเข้า http://localhost:8507")
@@ -211,8 +255,17 @@ def main() -> None:
     setup_data_folder()
     check_users(py)
     make_startup_link()
+    make_desktop_icons()
     start_now()
     print("\nขั้นต่อไป")
+    # โหลดใหม่ เผื่อขั้น 3 เพิ่งบันทึก data_folder.txt ในรอบนี้ (ค่าที่ import ไว้ก่อนหน้าจะชี้ผิดที่)
+    import importlib
+    import data_paths
+    importlib.reload(data_paths)
+    owner, me = data_paths.etl_machine(), data_paths.this_machine()
+    if owner and owner != me:
+        print(f"  - เครื่องอัปเดตข้อมูลตอนนี้คือ {owner} — ไอคอนอัปเดตบนเครื่องนี้ ({me}) ยังไม่ทำงาน")
+        print("    วันย้ายงานอัปเดตมาเครื่องนี้ ให้ดับเบิลคลิก ตั้งเครื่องนี้เป็นเครื่องอัปเดต.bat")
     print("  - ให้คนอื่นในวง LAN เข้าดูได้: คลิกขวา เปิด_firewall_dashboards.bat > Run as administrator")
     print("  - ตรวจว่าระบบปกติ: ดับเบิลคลิก ตรวจสุขภาพระบบ.bat")
     print("  - คู่มือเต็ม: คู่มือส่งมอบระบบ.md")

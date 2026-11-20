@@ -186,6 +186,10 @@ def main() -> int:
     log_path = _start_log()
     head("อัปเดตข้อมูล MOS ประจำวัน")
     print(f"  {time.strftime('%Y-%m-%d %H:%M:%S')}  บันทึกผลรอบนี้ไว้ที่ {log_path}")
+    blocked = data_paths.etl_block_reason()
+    if blocked:
+        print("\n" + blocked)
+        return 1
     before_rows, _ = snapshot()
     if not os.path.exists(UPDATE_MOS):
         print("  ไม่พบสคริปต์ ETL ของฝ่ายที่")

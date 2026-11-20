@@ -27,6 +27,7 @@ from __future__ import annotations
 import functools
 import glob
 import os
+import socket
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # ไฟล์ตั้งค่าโฟลเดอร์ฝ่าย (บรรทัดเดียว = path เต็ม) — ใช้เมื่อเครื่องนั้น sync
@@ -122,6 +123,45 @@ def repair_dir() -> str:
 def find(filename: str, candidates: tuple = ()) -> str:
     """หาไฟล์ใด ๆ ในโฟลเดอร์ฝ่าย → คืนเส้นทางเต็ม"""
     return os.path.join(locate_dir(filename, candidates, filename), filename)
+
+
+# ---------------------------------------------------------------------------
+# เครื่องอัปเดตข้อมูล — มีได้เครื่องเดียว
+# ---------------------------------------------------------------------------
+# ทำไมต้องมี: พอระบบรันได้สองเครื่อง (โน้ตบุ๊กเดิม + คอมห้องช่าง) ทั้งสองเครื่องมีปุ่มอัปเดต
+# MOS/Solar ครบ และอ่าน-เขียนไฟล์ Excel/parquet ชุดเดียวกันบน OneDrive ถ้ากดอัปเดตจากสองเครื่อง
+# OneDrive จะแตกไฟล์เป็นสำเนา conflict แล้วข้อมูลแยกเป็นสองชุดโดยไม่มีอะไรฟ้อง
+# ไฟล์นี้อยู่ในโฟลเดอร์ข้อมูล (ไม่ใช่ข้างโค้ด) ทุกเครื่องจึงเห็นค่าเดียวกัน
+# ย้ายเครื่องอัปเดต: ดับเบิลคลิก ตั้งเครื่องนี้เป็นเครื่องอัปเดต.bat บนเครื่องใหม่
+ETL_MACHINE_FILE = os.path.join(DEPT_DIR, "00_ETL_Pipeline", "etl_machine.txt")
+
+
+def this_machine() -> str:
+    return (os.environ.get("COMPUTERNAME") or socket.gethostname()).strip().upper()
+
+
+def etl_machine() -> str:
+    """ชื่อเครื่องที่กำหนดให้เป็นเครื่องอัปเดต — "" ถ้ายังไม่เคยกำหนด หรืออ่านไฟล์ไม่ได้"""
+    try:
+        with open(ETL_MACHINE_FILE, encoding="utf-8-sig") as f:
+            return f.readline().strip().upper()
+    except OSError:
+        return ""
+
+
+def etl_block_reason() -> str:
+    """"" ถ้าเครื่องนี้กดอัปเดตข้อมูลได้ ไม่งั้นคืนข้อความบอกว่าทำไมไม่ได้และต้องทำอะไร
+
+    ยังไม่เคยกำหนดเครื่อง = อนุญาต (พฤติกรรมเดิม) ระบบจะไม่ล็อกใครออกเพราะไฟล์หาย
+    """
+    owner, me = etl_machine(), this_machine()
+    if not owner or owner == me:
+        return ""
+    return (
+        f"  *** เครื่องนี้ ({me}) ไม่ใช่เครื่องอัปเดตข้อมูล — เครื่องที่กำหนดไว้คือ {owner}\n"
+        "      ไม่ได้ทำอะไรกับข้อมูล ระบบให้อัปเดตจากเครื่องเดียว กันไฟล์บน OneDrive ชนกัน\n"
+        "      ถ้าย้ายงานอัปเดตมาเครื่องนี้แล้วจริง ๆ ให้ดับเบิลคลิก ตั้งเครื่องนี้เป็นเครื่องอัปเดต.bat"
+    )
 
 
 # ---------------------------------------------------------------------------

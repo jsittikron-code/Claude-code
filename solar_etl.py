@@ -1204,6 +1204,13 @@ def run_update(rebuild: bool = False, check: bool = False, out=print) -> int:
     def head_(text):
         out("\n" + LINE + "\n  " + text + "\n" + LINE)
 
+    # โหมดตรวจไม่เขียนอะไร จึงดูจากเครื่องไหนก็ได้ — รอบจริงต้องเป็นเครื่องอัปเดตเท่านั้น
+    # (ปุ่มในแดชบอร์ด 8504 เรียกฟังก์ชันนี้เหมือนกัน และแดชบอร์ดรันอยู่ทุกเครื่อง)
+    blocked = "" if check else data_paths.etl_block_reason()
+    if blocked:
+        out("\n" + blocked)
+        return 1
+
     try:
         raw = data_paths.solar_raw_dir()
     except data_paths.DataFolderNotFound as e:
